@@ -10,8 +10,21 @@ SRC=${1:-}
 
 ROOT=$(cd "${0%/*}/.." && pwd)
 VERSION=$(sed -n 's/^version=//p' "$ROOT/module/module.prop")
+VCODE=$(sed -n 's/^versionCode=//p' "$ROOT/module/module.prop")
 WORK="$ROOT/.build"
 DIST="$ROOT/dist"
+
+# update.json 与实际包不一致时，管理器会推错版本或反复提示更新
+JSON_VERSION=$(sed -n 's/.*"version": *"v\{0,1\}\([^"]*\)".*/\1/p' "$ROOT/update.json")
+JSON_CODE=$(sed -n 's/.*"versionCode": *\([0-9][0-9]*\).*/\1/p' "$ROOT/update.json")
+[ "$JSON_VERSION" = "$VERSION" ] || {
+  echo "update.json 的 version（$JSON_VERSION）与 module.prop（$VERSION）不一致" >&2
+  exit 1
+}
+[ "$JSON_CODE" = "$VCODE" ] || {
+  echo "update.json 的 versionCode（$JSON_CODE）与 module.prop（$VCODE）不一致" >&2
+  exit 1
+}
 
 rm -rf "$WORK"
 mkdir -p "$WORK/module/runtime" "$WORK/module/common" "$DIST"

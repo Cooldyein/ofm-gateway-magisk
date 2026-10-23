@@ -92,6 +92,25 @@ su -c 'sh /data/adb/modules/ofm_gateway/common/ofmctl.sh status'
 
 产物为 `dist/OFM_Gateway_Magisk_<version>.zip`。
 
+脚本会先核对 `update.json` 与 `module/module.prop` 的 `version` / `versionCode`，
+不一致时直接报错——否则管理器会推错版本或反复提示更新。
+
+## 发版
+
+模块通过 `update.json` 向 KernelSU / Magisk 上报新版本（`module.prop` 的 `updateJson` 指向它）。
+每次发版改三处，再打 Release：
+
+1. `module/module.prop`：调高 `version` 与 `versionCode`（**`versionCode` 必须是递增整数**，管理器只按它比新旧）
+2. `update.json`：同步 `version` / `versionCode`，把 `zipUrl` 换成本次 Release 附件的直链
+3. `CHANGELOG.md`：写本次改动
+
+然后执行构建并把 zip 传到对应的 Release 附件。注意：
+
+- `zipUrl` 必须指向 **Release 附件**，不能指向仓库源码 zip——源码包里没有 `runtime/`，刷入会失败。
+- `raw.githubusercontent.com` 有约 5 分钟 CDN 缓存，改完 `update.json` 不会立刻生效。
+- 如果改动了 `customize.sh` 的解压逻辑，记得递增 `runtime/.version`，否则已解压过的设备不会重新解压。
+- 仓库必须公开，否则管理器取不到 `update.json`。
+
 ## 说明
 
 - 本模块只是把上游项目 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)
