@@ -1,9 +1,13 @@
 # OFM 本机网关 · Magisk / KernelSU 模块
 
-把 [Our Free Model](https://github.com/Ebony-Vinyl/dsh-our-free-model) 的本地网关做成系统级模块：
+把 Our Free Model 的本地网关做成系统级模块：
 **开机以 root 常驻运行，不需要安装那个 App，也不需要它在后台待着。**
 
 > 作者酷安主页：<https://www.coolapk.com/u/3214953>
+>
+> 运行时代码分别来自 [上游 App](https://yun.139.com/shareweb/#/w/i/2yA8DQdn7gvts) 与
+> [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)，
+> 详见 [上游来源](#上游来源)。
 
 ---
 
@@ -27,6 +31,24 @@
 | **动作按钮** | 没有 WebUI 时也能在管理器里点「动作」操作 |
 | **数据独立** | 全部落在 `/data/adb/ofm`，与 App 数据隔离 |
 | **更新检测** | 通过 `update.json` 支持管理器内直接检查更新 |
+
+## 上游来源
+
+本模块不自己实现任何模型能力，只是把上游的现成服务搬到 Android 系统层运行。
+模块包里那份 Node 运行时与 `packages/standalone` 服务，就是从下面这个 App 里原样取出的：
+
+| 来源 | 地址 | 说明 |
+| --- | --- | --- |
+| **上游 App（运行时来源）** | <https://yun.139.com/shareweb/#/w/i/2yA8DQdn7gvts> | 模块内置的 Node 运行时与服务代码即取自该安装包 |
+| **上游项目（服务实现）** | <https://github.com/Ebony-Vinyl/dsh-our-free-model> | standalone 服务的实现与模型接入逻辑均来自这里 |
+
+需要说清楚的是：**我不知道这个 App 的源头是谁**。它分发的安装包中包含了完整的
+`packages/standalone` 服务与 Node 运行时，模块只是把它解包出来、改由 Magisk/KernelSU 启动，
+并未修改服务本身的业务逻辑。如果你是这个 App 的维护者并不希望被这样分发，
+请开 issue 告知，我会移除相关制品。
+
+模型额度、地区限制、账号渠道、上游条款等一切能力与限制，都由上面两个上游决定，
+本模块不介入也无法保证。
 
 ## 安装
 
@@ -164,8 +186,9 @@ su -c "sh $CTL info"       # 机器可读状态（WebUI 用）
 
 ## 说明
 
-- 本模块只是把上游 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)
-  的 standalone 服务搬到 Android 系统层运行；模型能力与其限制（额度、地区、上游条款）与上游一致。
+- 本模块只是把上游服务搬到 Android 系统层运行；模型能力与其限制（额度、地区、上游条款）与上游一致。
+- 上游有两个：[App 安装包](https://yun.139.com/shareweb/#/w/i/2yA8DQdn7gvts)（运行时来源）
+  与 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)（服务实现）。
 - 免费模型的可用性由上游决定，模块不介入也无法保证。
 - 模块不收集任何数据，也不联网上报；所有状态都在 `/data/adb/ofm`。
 - 与任何模型提供方无隶属或背书关系。
