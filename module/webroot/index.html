@@ -440,31 +440,60 @@
   document.getElementById("btnOpenConsole").onclick = function () {
     var port = current.port || 15656;
     var host = current.host || "127.0.0.1";
+    // 管理页的同源围栏会拒绝非 http 的 Referer（如 android-app://、
+    // 第三方浏览器自带来源），表现为首次打开 403、手动敲回车才正常。
+    // 用 VIEW intent 直接投递 URL，并先复制到剪贴板作为兵底。
     var url = "http://" + host + ":" + port + "/";
-    // WebView 内无法内嵌（frame-ancestors 'none'），交给系统浏览器
-    var k = ks();
-    if (k && typeof k.openUrl === "function") {
-      k.openUrl(url);
-      return;
-    }
-    if (typeof k !== "undefined" && k && typeof k.exec === "function") {
-      exec("am start -a android.intent.action.VIEW -d " + q(url) + " >/dev/null 2>&1");
-      return;
-    }
-    window.open(url, "_blank");
+
+    copyText(url);
+
+    exec("am start -a android.intent.action.VIEW -d " + q(url) +
+         " --activity-clear-task >/dev/null 2>&1").then(function (r) {
+      if (r.errno !== 0) {
+        // am 不可用时退回 ksu.openUrl
+        var k = ks();
+        if (k && typeof k.openUrl === "function") k.openUrl(url);
+        else toast("已复制地址，请到浏览器粘贴打开", true);
+        return;
+      }
+      toast("已复制地址；若页面报同源错误，请粘到地址栏回车");
+    }).catch(function () {
+      toast("已复制地址，请到浏览器粘贴打开", true);
+    });
   };
 
   document.getElementById("key").onclick = function () {
     var text = current.key;
     if (!text) return;
+    copyText(text, "Key 已复制");
+  };
+
+  function copyText(text, okMsg) {
+    if (!text) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () {
-        toast("Key 已复制");
-      }).catch(function () { toast("复制失败", true); });
-    } else {
-      toast("长按手动复制", true);
+        if (okMsg) toast(okMsg);
+      }).catch(function () {
+        fallbackCopy(text);
+      });
+      return;
     }
-  };
+    fallbackCopy(text);
+  }
+
+  function fallbackCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (ok) toast("已复制");
+    else toast("复制失败，请长按选择", true);
+  }
 
   refresh()
     .then(function () {
