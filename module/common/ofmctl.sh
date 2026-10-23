@@ -24,7 +24,13 @@ ensure_dirs() {
 }
 
 is_running() {
-  [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+  [ -f "$PIDFILE" ] || return 1
+  _pid=$(cat "$PIDFILE" 2>/dev/null)
+  case "$_pid" in ''|*[!0-9]*) return 1 ;; esac
+  # PID 会被系统复用，光看 kill -0 会把别的进程误判为服务还在；
+  # 再核一下命令行确实是本模块的 node
+  kill -0 "$_pid" 2>/dev/null || return 1
+  tr '\0' ' ' <"/proc/$_pid/cmdline" 2>/dev/null | grep -q 'standalone/cli.mjs'
 }
 
 # 上次异常退出会残留锁文件，服务会拒绝启动；只在确认无进程时清理
@@ -74,14 +80,20 @@ start() {
 }
 
 stop() {
-  if ! is_running; then return 0; fi
-  kill "$(cat "$PIDFILE")" 2>/dev/null
+  if ! is_running; then
+    # 进程已不在，但可能残留文件；一并清掉再返回
+    [ -f "$LOG_PIDFILE" ] && kill "$(cat "$LOG_PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE" "$LOG_PIDFILE" "$LOG_FIFO" "$DATA_DIR/service.lock"
+    return 0
+  fi
+  _pid=$(cat "$PIDFILE")
+  kill "$_pid" 2>/dev/null
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    is_running || break
+    kill -0 "$_pid" 2>/dev/null || break
     sleep 1
   done
-  is_running && kill -9 "$(cat "$PIDFILE")" 2>/dev/null
-  # 停掉加时间戳的读取进程，否则它在 FIFO 上一直等待
+  kill -0 "$_pid" 2>/dev/null && kill -9 "$_pid" 2>/dev/null
+  # 停掉加时间戳的读取进程，否则它在 FIFO 上一直等
   [ -f "$LOG_PIDFILE" ] && kill "$(cat "$LOG_PIDFILE")" 2>/dev/null
   rm -f "$PIDFILE" "$LOG_PIDFILE" "$LOG_FIFO" "$DATA_DIR/service.lock"
 }
