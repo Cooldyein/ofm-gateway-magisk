@@ -41,7 +41,7 @@ Key 由服务首次启动时自动生成并存进 `/data/adb/ofm/settings.json`�
 
 ## 安装
 
-1. 从 Releases 下载 `OFM_Gateway_Magisk_v0.1.0.zip`。
+1. 从 Releases 下载最新版的 `OFM_Gateway_Magisk_v<版本>.zip`。
 2. 在 KernelSU / Magisk 的模块页面选「从本地安装」，选中这个 zip。
 3. 重启手机。模块安装时已经解好运行时，重启后服务会自动起来。
 

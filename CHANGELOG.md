@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.2.0
+
+- 新增 KernelSU WebUI 管理页面：状态、启停 / 重启、端口与监听地址、开机自启、日志查看
+- WebUI 通过 `ksu.exec` 调用 `ofmctl.sh`，不额外监听端口
+- `ofmctl.sh` 新增 `info`、`set-config`、`log` 三个子命令
+- 构建脚本会核对 `update.json` 与 `module.prop` 的版本是否一致
+
 ## v0.1.0
 
 首个版本。
