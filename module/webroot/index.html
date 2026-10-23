@@ -266,7 +266,7 @@
   }
 
   function setBusy(busy) {
-    ["btnStart", "btnStop", "btnRestart", "btnSave", "btnSaveRestart"].forEach(function (id) {
+    ["btnStart", "btnStop", "btnRestart", "btnSave", "btnSaveRestart", "btnConsole"].forEach(function (id) {
       document.getElementById(id).disabled = busy;
     });
   }
@@ -335,7 +335,6 @@
         throw new Error("控制台返回了无法解析的内容");
       }
       var catalog = d.catalog || [];
-      var routable = catalog.filter(function (m) { return m.routable; }).length;
       var usable = catalog.filter(function (m) {
         return m.routable && (m.availability === "listed" || m.availability === "available" || m.availability === "unknown");
       }).length;

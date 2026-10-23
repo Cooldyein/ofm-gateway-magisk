@@ -8,7 +8,13 @@ MODDIR=${0%/*}
 
 [ "$AUTOSTART" = "1" ] || exit 0
 
-# 等系统把 /data 挂好再起服务
-until [ -d /data/adb ]; do sleep 1; done
+# 等 /data 挂好。加超时：正常几秒内就绪，长期不就绪说明环境异常，
+# 无上限等待会让这个 boot 脚本一直挂着
+_i=0
+until [ -d /data/adb ]; do
+  _i=$((_i + 1))
+  [ "$_i" -ge 60 ] && exit 1
+  sleep 1
+done
 
 OFM_MODDIR="$MODDIR" sh "$MODDIR/common/ofmctl.sh" start

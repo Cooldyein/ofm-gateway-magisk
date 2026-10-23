@@ -67,7 +67,14 @@ start() {
   # 服务输出先进 FIFO，由 stamp_lines 加时间戳再落盘。
   # 这样 node 的 PID 仍是真实进程（$!），启停不受管道影响。
   rm -f "$LOG_FIFO"
-  mkfifo -m 0600 "$LOG_FIFO" || return 1
+  if ! mkfifo -m 0600 "$LOG_FIFO" 2>/dev/null; then
+    # 无法建 FIFO（FIFO 文件系统不支持或目录权限）时退化为直接写日志，
+    # 否则服务根本起不来
+    OFM_HOME="$DATA_DIR" HOME="$MODDIR" OFM_HOST="$HOST" \
+      "$NODE" packages/standalone/cli.mjs "$@" >>"$LOG_FILE" 2>&1 &
+    echo $! >"$PIDFILE"
+    return 0
+  fi
   ( stamp_lines <"$LOG_FIFO" >>"$LOG_FILE" ) &
   echo $! >"$LOG_PIDFILE"
 
@@ -92,7 +99,12 @@ stop() {
     kill -0 "$_pid" 2>/dev/null || break
     sleep 1
   done
-  kill -0 "$_pid" 2>/dev/null && kill -9 "$_pid" 2>/dev/null
+  # SIGTERM 后等不到再上 SIGKILL，再给它一点回收时间，
+  # 否则下面立即判断可能读到刚发完信号但尚未退出的进程
+  if kill -0 "$_pid" 2>/dev/null; then
+    kill -9 "$_pid" 2>/dev/null
+    sleep 1
+  fi
   # 停掉加时间戳的读取进程，否则它在 FIFO 上一直等
   [ -f "$LOG_PIDFILE" ] && kill "$(cat "$LOG_PIDFILE")" 2>/dev/null
   rm -f "$PIDFILE" "$LOG_PIDFILE" "$LOG_FIFO" "$DATA_DIR/service.lock"
@@ -168,8 +180,10 @@ case "$1" in
     [ -n "$_port" ] || _port=$PORT
     _key=$(key_of)
     [ -n "$_key" ] || { echo "尚未生成 API Key" >&2; exit 1; }
+    command -v curl >/dev/null 2>&1 || { echo "缺少 curl，无法读取控制台" >&2; exit 1; }
     _base="http://$HOST:$_port"
-    _jar="/data/local/tmp/.ofm-console.$$"
+    # cookie 落到数据目录（0700）而不是全局可读的 /data/local/tmp
+    _jar="$DATA_DIR/.console.$$"
     _payload=$(printf '{"key":"%s"}' "$_key")
     if ! curl -s -m 10 -c "$_jar" -X POST "$_base/api/management/session" \
         -H 'Content-Type: application/json' -H "Origin: $_base" -d "$_payload" >/dev/null 2>&1; then

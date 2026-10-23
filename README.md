@@ -70,7 +70,7 @@ su -c 'sh /data/adb/modules/ofm_gateway/common/ofmctl.sh status'
 | --- | --- |
 | `/data/adb/modules/ofm_gateway` | 模块本体（脚本、运行时压缩包） |
 | `/data/adb/ofm-runtime` | 解压出来的 Node 运行时与服务代码 |
-| `/data/adb/ofm` | 数据：`settings.json`、`stats.json`、`omf.log` 等 |
+| `/data/adb/ofm` | 数据：`settings.json`、`stats.json`、`ofm.log` 等 |
 | `/data/adb/ofm/ofm.log` | 服务日志，含管理面板登录链接 |
 
 运行时之所以放在 `/data/adb/ofm-runtime` 而不是模块目录，是因为模块升级时旧目录会被

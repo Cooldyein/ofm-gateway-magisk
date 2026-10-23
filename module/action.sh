@@ -16,7 +16,9 @@ while true; do
   echo "3) 启动服务"
   echo "4) 退出"
   printf '选择：'
-  read -r choice
+  # stdin 不是终端或已关闭时，read 会立即返回非 0，
+  # 不break就会死循环刷屏
+  read -r choice || break
   case "$choice" in
     1) sh "$CTL" restart ;;
     2) sh "$CTL" stop ;;
