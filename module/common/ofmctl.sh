@@ -9,7 +9,15 @@ NODE="$RT_DIR/usr/bin/node"
 APP_DIR="$RT_DIR/app"
 PIDFILE="$DATA_DIR/ofm.pid"
 LOG_FILE="$DATA_DIR/ofm.log"
+LOG_FIFO="$DATA_DIR/ofm.log.fifo"
+LOG_PIDFILE="$DATA_DIR/ofm.log.pid"
 
+# 输出会混着行尾的 \r（SSE 进度类日志），先统一成 \n 再打时间戳
+stamp_lines() {
+  tr '\r' '\n' | while IFS= read -r line; do
+    printf '%s %s\n' "$(date '+%m/%d-%H:%M:%S')" "$line"
+  done
+}
 ensure_dirs() {
   mkdir -p "$DATA_DIR"
   chmod 0700 "$DATA_DIR"
@@ -49,11 +57,19 @@ start() {
   clear_stale_lock
   rm -f "$PIDFILE"
   cd "$APP_DIR" || return 1
+
+  # 服务输出先进 FIFO，由 stamp_lines 加时间戳再落盘。
+  # 这样 node 的 PID 仍是真实进程（$!），启停不受管道影响。
+  rm -f "$LOG_FIFO"
+  mkfifo -m 0600 "$LOG_FIFO" || return 1
+  ( stamp_lines <"$LOG_FIFO" >>"$LOG_FILE" ) &
+  echo $! >"$LOG_PIDFILE"
+
   # PORT=0 时不传 --port，让服务沿用自己存下的端口
   set -- --data-dir "$DATA_DIR"
   [ "$PORT" = "0" ] || set -- --port "$PORT" "$@"
   OFM_HOME="$DATA_DIR" HOME="$MODDIR" OFM_HOST="$HOST" \
-    "$NODE" packages/standalone/cli.mjs "$@" >>"$LOG_FILE" 2>&1 &
+    "$NODE" packages/standalone/cli.mjs "$@" >"$LOG_FIFO" 2>&1 &
   echo $! >"$PIDFILE"
 }
 
@@ -65,7 +81,9 @@ stop() {
     sleep 1
   done
   is_running && kill -9 "$(cat "$PIDFILE")" 2>/dev/null
-  rm -f "$PIDFILE" "$DATA_DIR/service.lock"
+  # 停掉加时间戳的读取进程，否则它在 FIFO 上一直等待
+  [ -f "$LOG_PIDFILE" ] && kill "$(cat "$LOG_PIDFILE")" 2>/dev/null
+  rm -f "$PIDFILE" "$LOG_PIDFILE" "$LOG_FIFO" "$DATA_DIR/service.lock"
 }
 
 case "$1" in
