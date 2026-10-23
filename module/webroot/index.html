@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>OFM 本机网关</title>
+<style>
+  :root {
+    --bg: #0b0c0e;
+    --card: #15171a;
+    --card-2: #1b1e22;
+    --line: #262a30;
+    --text: #e8eaed;
+    --muted: #8b929c;
+    --accent: #34c759;
+    --danger: #ff453a;
+    --warn: #ff9f0a;
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --card-2: #f7f8fa;
+      --line: #e3e6ea;
+      --text: #14161a;
+      --muted: #6b7280;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, "Noto Sans SC", "PingFang SC", sans-serif;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 16px; margin: 0 0 14px; font-weight: 600;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 9px 0; border-top: 1px solid var(--line);
+  }
+  .row:first-of-type { border-top: none; }
+  .row .k { color: var(--muted); font-size: 14px; flex: 0 0 auto; }
+  .row .v {
+    font-size: 14px; text-align: right; word-break: break-all;
+    font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 13px;
+    background: var(--card-2); border: 1px solid var(--line);
+  }
+  .pill::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted);
+  }
+  .pill.on { color: var(--accent); }
+  .pill.on::before { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .pill.off { color: var(--muted); }
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  button {
+    font: inherit; font-size: 14px; padding: 11px 8px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--card-2); color: var(--text);
+    cursor: pointer; transition: opacity .15s, transform .1s;
+  }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .45; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06170a; font-weight: 600; }
+  button.ghost { background: transparent; }
+  .field { padding: 10px 0; border-top: 1px solid var(--line); }
+  .field:first-of-type { border-top: none; }
+  .field label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .field input[type="number"], .field select {
+    width: 100%; padding: 10px 12px; font: inherit; font-size: 14px;
+    color: var(--text); background: var(--card-2);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .switch { display: flex; align-items: center; justify-content: space-between; }
+  .switch input { width: 46px; height: 28px; appearance: none; background: var(--line); border-radius: 999px; position: relative; transition: background .2s; flex: 0 0 auto; }
+  .switch input::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
+    border-radius: 50%; background: #fff; transition: transform .2s;
+  }
+  .switch input:checked { background: var(--accent); }
+  .switch input:checked::after { transform: translateX(18px); }
+  pre.log {
+    margin: 0; padding: 12px; max-height: 240px; overflow: auto;
+    background: #0a0b0d; color: #c9d1d9; border-radius: 10px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    line-height: 1.55; white-space: pre-wrap; word-break: break-all;
+  }
+  @media (prefers-color-scheme: light) {
+    pre.log { background: #0f1115; color: #d6dde6; }
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
+  .foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 20px; line-height: 1.9; }
+  .foot a { color: var(--muted); }
+  #toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translate(-50%, 12px);
+    background: #1f2328; color: #fff; padding: 10px 18px; border-radius: 12px;
+    font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+    max-width: 86vw; text-align: center; z-index: 50;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<h1>OFM 本机网关</h1>
+<div class="sub" id="subtitle">读取中…</div>
+
+<div class="card">
+  <h2>状态 <span class="pill" id="statePill">未知</span></h2>
+  <div class="row"><span class="k">PID</span><span class="v mono" id="pid">—</span></div>
+  <div class="row"><span class="k">地址</span><span class="v mono" id="addr">—</span></div>
+  <div class="row"><span class="k">API Key</span><span class="v mono" id="key">—</span></div>
+  <div class="row"><span class="k">运行时</span><span class="v mono" id="runtime">—</span></div>
+  <div class="actions" style="margin-top:14px">
+    <button class="primary" id="btnStart">启动</button>
+    <button id="btnStop">停止</button>
+    <button id="btnRestart">重启</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>配置</h2>
+  <div class="field">
+    <label for="port">监听端口（0 = 沿用服务记住的端口）</label>
+    <input type="number" id="port" min="0" max="65535" inputmode="numeric" placeholder="15656">
+  </div>
+  <div class="field">
+    <label for="host">监听地址</label>
+    <select id="host">
+      <option value="127.0.0.1">仅本机 127.0.0.1</option>
+      <option value="0.0.0.0">局域网 0.0.0.0</option>
+    </select>
+  </div>
+  <div class="field switch">
+    <label for="autostart" style="margin:0">开机自启</label>
+    <input type="checkbox" id="autostart">
+  </div>
+  <div class="actions" style="margin-top:14px;grid-template-columns:1fr 1fr">
+    <button class="ghost" id="btnSave">保存</button>
+    <button class="primary" id="btnSaveRestart">保存并重启</button>
+  </div>
+  <div class="hint" id="configHint">保存只写配置文件；需要重启才生效。</div>
+</div>
+
+<div class="card">
+  <h2>日志
+    <button class="ghost" id="btnLog" style="padding:5px 12px;font-size:13px">刷新</button>
+  </h2>
+  <pre class="log" id="log">读取中…</pre>
+</div>
+
+<div class="foot">
+  <div id="version">OFM 本机网关</div>
+  <div><a href="https://www.coolapk.com/u/3214953">作者酷安主页</a></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var MODDIR = "/data/adb/modules/ofm_gateway";
+  var CTL = MODDIR + "/common/ofmctl.sh";
+
+  // KernelSU 不同分支暴露的名字不一样，Zygisk Next 页面也做同样兼容
+  function ks() {
+    if (typeof window.ksu !== "undefined") return window.ksu;
+    if (typeof window.apatch !== "undefined") return window.apatch;
+    return null;
+  }
+
+  var cbSeq = 0;
+
+  // exec 有两种形态：同步返回字符串，或传回调按 (errno, stdout, stderr) 回来。
+  // exec 只有同步返回、没有回调，异步场景必须用回调形态。
+  function exec(cmd) {
+    return new Promise(function (resolve, reject) {
+      var k = ks();
+      if (!k || typeof k.exec !== "function") {
+        reject(new Error("当前环境不支持 KernelSU WebUI 接口"));
+        return;
+      }
+      var name = "__ofmCb" + (++cbSeq);
+      var done = false;
+      window[name] = function (errno, stdout, stderr) {
+        if (done) return;
+        done = true;
+        delete window[name];
+        resolve({ errno: errno, stdout: stdout || "", stderr: stderr || "" });
+      };
+      try {
+        var ret = k.exec(cmd, name);
+        // 同步实现会直接返回输出，不会回调
+        if (typeof ret === "string") {
+          if (done) return;
+          done = true;
+          delete window[name];
+          resolve({ errno: 0, stdout: ret, stderr: "" });
+        }
+      } catch (e) {
+        if (!done) { done = true; delete window[name]; }
+        reject(e);
+      }
+    });
+  }
+
+  function toast(msg, isErr) {
+    var el = document.getElementById("toast");
+    el.textContent = msg;
+    el.className = "show" + (isErr ? " err" : "");
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.className = ""; }, 2200);
+  }
+
+  function parseKV(text) {
+    var out = {};
+    text.split("\n").forEach(function (line) {
+      var i = line.indexOf("=");
+      if (i > 0) out[line.slice(0, i)] = line.slice(i + 1);
+    });
+    return out;
+  }
+
+  function q(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'";
+  }
+
+  function setBusy(busy) {
+    ["btnStart", "btnStop", "btnRestart", "btnSave", "btnSaveRestart"].forEach(function (id) {
+      document.getElementById(id).disabled = busy;
+    });
+  }
+
+  var current = {};
+
+  function render(info) {
+    current = info;
+    var running = info.running === "1";
+    var pill = document.getElementById("statePill");
+    pill.textContent = running ? "运行中" : "未运行";
+    pill.className = "pill " + (running ? "on" : "off");
+    document.getElementById("subtitle").textContent =
+      running ? "网关已在监听" : "服务当前未运行";
+
+    document.getElementById("pid").textContent = running ? info.pid || "—" : "—";
+    document.getElementById("addr").textContent =
+      "http://" + (info.host || "127.0.0.1") + ":" + (info.port || "—") + "/v1";
+    document.getElementById("key").textContent = info.key || "（尚未生成）";
+    document.getElementById("runtime").textContent = info.runtime || "未解压";
+
+    if (document.activeElement !== document.getElementById("port")) {
+      document.getElementById("port").value = info.port || "";
+    }
+    document.getElementById("host").value =
+      info.host === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1";
+    document.getElementById("autostart").checked = info.autostart === "1";
+  }
+
+  function refresh() {
+    return exec("sh " + q(CTL) + " info").then(function (r) {
+      if (r.errno !== 0) throw new Error(r.stderr || "读取状态失败");
+      render(parseKV(r.stdout));
+    });
+  }
+
+  function loadLog() {
+    return exec("sh " + q(CTL) + " log 60").then(function (r) {
+      var pre = document.getElementById("log");
+      pre.textContent = r.stdout.trim() || "暂无日志";
+      pre.scrollTop = pre.scrollHeight;
+    });
+  }
+
+  function act(key, label) {
+    setBusy(true);
+    toast(label + "中…");
+    exec("sh " + q(CTL) + " " + key).then(function (r) {
+      if (r.errno !== 0) throw new Error(r.stderr || label + "失败");
+      return refresh().then(loadLog);
+    }).then(function () {
+      toast(label + "完成");
+    }).catch(function (e) {
+      toast(e.message || String(e), true);
+    }).then(function () {
+      setBusy(false);
+    });
+  }
+
+  function save(andRestart) {
+    var port = document.getElementById("port").value.trim();
+    var host = document.getElementById("host").value;
+    var auto = document.getElementById("autostart").checked ? "1" : "0";
+
+    if (port !== "" && !/^[0-9]+$/.test(port)) {
+      toast("端口必须是数字", true);
+      return;
+    }
+    if (port !== "" && (Number(port) < 0 || Number(port) > 65535)) {
+      toast("端口需在 0–65535 之间", true);
+      return;
+    }
+
+    setBusy(true);
+    var steps = [];
+    if (port !== "" && String(current.port) !== port) {
+      steps.push("sh " + q(CTL) + " set-config port " + port);
+    }
+    if (host !== current.host) {
+      steps.push("sh " + q(CTL) + " set-config host " + q(host));
+    }
+    if (auto !== current.autostart) {
+      steps.push("sh " + q(CTL) + " set-config autostart " + auto);
+    }
+
+    var chain = Promise.resolve();
+    var saved = 0;
+    steps.forEach(function (cmd) {
+      chain = chain.then(function () {
+        return exec(cmd).then(function (r) {
+          if (r.errno !== 0) throw new Error(r.stderr || "写入配置失败");
+          saved++;
+        });
+      });
+    });
+
+    chain
+      .then(function () {
+        if (andRestart) {
+          return exec("sh " + q(CTL) + " restart").then(function (r) {
+            if (r.errno !== 0) throw new Error(r.stderr || "重启失败");
+          });
+        }
+      })
+      .then(refresh)
+      .then(function () {
+        toast(saved === 0 ? "没有需要保存的改动" : (andRestart ? "已保存并重启" : "已保存，重启后生效"));
+      })
+      .catch(function (e) {
+        toast(e.message || String(e), true);
+      })
+      .then(function () {
+        setBusy(false);
+      });
+  }
+
+  document.getElementById("btnStart").onclick = function () { act("start", "启动"); };
+  document.getElementById("btnStop").onclick = function () { act("stop", "停止"); };
+  document.getElementById("btnRestart").onclick = function () { act("restart", "重启"); };
+  document.getElementById("btnSave").onclick = function () { save(false); };
+  document.getElementById("btnSaveRestart").onclick = function () { save(true); };
+  document.getElementById("btnLog").onclick = function () {
+    loadLog().then(function () { toast("已刷新"); });
+  };
+
+  document.getElementById("key").onclick = function () {
+    var text = current.key;
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        toast("Key 已复制");
+      }).catch(function () { toast("复制失败", true); });
+    } else {
+      toast("长按手动复制", true);
+    }
+  };
+
+  refresh().then(loadLog).catch(function (e) {
+    toast(e.message || String(e), true);
+    document.getElementById("subtitle").textContent = "无法读取状态";
+  });
+})();
+</script>
+</body>
+</html>

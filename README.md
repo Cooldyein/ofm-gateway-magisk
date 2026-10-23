@@ -95,6 +95,22 @@ su -c 'sh /data/adb/modules/ofm_gateway/common/ofmctl.sh status'
 脚本会先核对 `update.json` 与 `module/module.prop` 的 `version` / `versionCode`，
 不一致时直接报错——否则管理器会推错版本或反复提示更新。
 
+## WebUI
+
+在 KernelSU 管理器里点模块的「打开」即可进入页面（需要 KernelSU，Magisk 没有这个功能）。
+
+页面通过 `ksu.exec` 调用 `common/ofmctl.sh`，不自己起 HTTP 服务，也不直接请求网关接口：
+
+- **状态**：运行中 / 未运行、PID、地址、API Key（点一下复制）、运行时版本
+- **操作**：启动 / 停止 / 重启
+- **配置**：端口、监听地址、开机自启；可「保存」或「保存并重启」
+- **日志**：`ofm.log` 最后 60 行
+
+页面对写入值做严格校验（端口只能是 1–65535 的整数、地址只允许 `127.0.0.1` / `0.0.0.0`、自启只允许 0/1），
+`set-config` 也只做整行替换、不把输入拼接进 shell。
+
+`webroot/` 的权限与 SELinux 上下文由 KernelSU 安装时自动设置，构建脚本不会改它。
+
 ## 发版
 
 模块通过 `update.json` 向 KernelSU / Magisk 上报新版本（`module.prop` 的 `updateJson` 指向它）。

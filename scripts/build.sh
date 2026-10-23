@@ -36,6 +36,9 @@ cp "$ROOT/module/module.prop" "$ROOT/module/customize.sh" "$ROOT/module/service.
 cp "$ROOT/module/common/ofmctl.sh" "$ROOT/module/common/runtime.sh" "$WORK/module/common/"
 chmod 0755 "$WORK/module"/*.sh "$WORK/module/common"/*.sh
 
+# webroot 的权限与 SELinux 上下文由 KernelSU 安装时自己设置，这里不碰
+cp -r "$ROOT/module/webroot" "$WORK/module/webroot"
+
 unzip -p "$SRC" assets/runtime-arm64.tgz >"$WORK/module/runtime/runtime-arm64.tgz"
 printf '%s\n' "$VERSION" >"$WORK/module/runtime/.version"
 

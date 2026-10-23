@@ -34,6 +34,15 @@ key_of() {
   sed -n 's/.*"forwardKey": *"\([^"]*\)".*/\1/p' "$DATA_DIR/settings.json" 2>/dev/null | head -n 1
 }
 
+# 写配置。值由调用方校验过，这里只做整行替换，绝不拼接进 shell
+save_config() {
+  _key=$1
+  _val=$2
+  _tmp="$MODDIR/config.sh.tmp"
+  sed "s|^$_key=.*|$_key=$_val|" "$MODDIR/config.sh" >"$_tmp" || return 1
+  mv -f "$_tmp" "$MODDIR/config.sh"
+}
+
 start() {
   if is_running; then return 0; fi
   OFM_MODDIR="$MODDIR" sh "$MODDIR/common/runtime.sh" now || return 1
@@ -75,5 +84,53 @@ case "$1" in
       echo "未运行"
     fi
     ;;
-  *) echo "用法：$0 start|stop|restart|status" >&2; exit 1 ;;
+  # 供 WebUI 解析的机器可读输出，一行一个 key=value
+  info)
+    if is_running; then
+      echo "running=1"
+      echo "pid=$(cat "$PIDFILE")"
+    else
+      echo "running=0"
+      echo "pid="
+    fi
+    PORT_NOW=$(port_of)
+    [ -n "$PORT_NOW" ] || PORT_NOW=$PORT
+    echo "port=$PORT_NOW"
+    echo "host=$HOST"
+    echo "key=$(key_of)"
+    echo "autostart=$AUTOSTART"
+    echo "data_dir=$DATA_DIR"
+    echo "log_file=$LOG_FILE"
+    echo "runtime=$(cat "$RT_DIR/.version" 2>/dev/null)"
+    ;;
+  # 只允许 WebUI 改这三项，且值必须通过校验；不做任意写
+  set-config)
+    case "$2" in
+      port)
+        case "$3" in ''|*[!0-9]*) echo "端口必须是数字" >&2; exit 1 ;; esac
+        [ "$3" -le 65535 ] || { echo "端口超出范围" >&2; exit 1; }
+        save_config PORT "$3" || exit 1
+        ;;
+      host)
+        case "$3" in
+          127.0.0.1|0.0.0.0) save_config HOST "$3" || exit 1 ;;
+          *) echo "监听地址只能是 127.0.0.1 或 0.0.0.0" >&2; exit 1 ;;
+        esac
+        ;;
+      autostart)
+        case "$3" in
+          0|1) save_config AUTOSTART "$3" || exit 1 ;;
+          *) echo "开机自启只能是 0 或 1" >&2; exit 1 ;;
+        esac
+        ;;
+      *) echo "未知配置项：$2" >&2; exit 1 ;;
+    esac
+    ;;
+  log)
+    _n=${2:-40}
+    case "$_n" in ''|*[!0-9]*) _n=40 ;; esac
+    [ -f "$LOG_FILE" ] || { echo "暂无日志"; exit 0; }
+    tail -n "$_n" "$LOG_FILE"
+    ;;
+  *) echo "用法：$0 start|stop|restart|status|info|set-config|log" >&2; exit 1 ;;
 esac
