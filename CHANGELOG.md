@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.3.0
+
+- WebUI 新增「控制台」区块：推理服务状态、渠道模块、EAC 授权、可用模型计数、
+  刷新间隔、输出上限、目录同步时间
+- 新增 `ofmctl.sh console`：用本机 API Key 临时换取会话后读取 `/api/management/summary`，
+  cookie 写入临时文件、用完即删，Key 不经 URL
+- 「打开完整控制台」交给系统浏览器：管理页带 `frame-ancestors 'none'`，无法在 WebView 内嵌
+
 ## v0.2.2
 
 - 修复 PID 被复用导致的状态误判：`is_running` 除 `kill -0` 外再核对 `/proc/<pid>/cmdline`，

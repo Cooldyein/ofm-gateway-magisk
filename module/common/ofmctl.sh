@@ -162,5 +162,23 @@ case "$1" in
     [ -f "$LOG_FILE" ] || { echo "暂无日志"; exit 0; }
     tail -n "$_n" "$LOG_FILE"
     ;;
-  *) echo "用法：$0 start|stop|restart|status|info|set-config|log" >&2; exit 1 ;;
+  # 控制台数据：用 API Key 换会话再拉摘要，密钥不进 URL、不落盘
+  console)
+    _port=$(port_of)
+    [ -n "$_port" ] || _port=$PORT
+    _key=$(key_of)
+    [ -n "$_key" ] || { echo "尚未生成 API Key" >&2; exit 1; }
+    _base="http://$HOST:$_port"
+    _jar="/data/local/tmp/.ofm-console.$$"
+    _payload=$(printf '{"key":"%s"}' "$_key")
+    if ! curl -s -m 10 -c "$_jar" -X POST "$_base/api/management/session" \
+        -H 'Content-Type: application/json' -H "Origin: $_base" -d "$_payload" >/dev/null 2>&1; then
+      rm -f "$_jar"; echo "无法连接服务" >&2; exit 1
+    fi
+    curl -s -m 15 -b "$_jar" "$_base/api/management/summary"
+    _rc=$?
+    rm -f "$_jar"
+    [ "$_rc" = "0" ] || exit 1
+    ;;
+  *) echo "用法：$0 start|stop|restart|status|info|set-config|log|console" >&2; exit 1 ;;
 esac

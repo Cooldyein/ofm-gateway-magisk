@@ -162,6 +162,26 @@
 </div>
 
 <div class="card">
+  <h2>控制台
+    <button class="ghost" id="btnConsole" style="padding:5px 12px;font-size:13px">读取</button>
+  </h2>
+  <div class="row"><span class="k">推理服务</span><span class="v" id="cEnabled">—</span></div>
+  <div class="row"><span class="k">渠道模块</span><span class="v" id="cChannels">—</span></div>
+  <div class="row"><span class="k">EAC 授权</span><span class="v" id="cEac">—</span></div>
+  <div class="row"><span class="k">可用模型</span><span class="v" id="cModels">—</span></div>
+  <div class="row"><span class="k">刷新间隔</span><span class="v" id="cInterval">—</span></div>
+  <div class="row"><span class="k">输出上限</span><span class="v" id="cMaxTokens">—</span></div>
+  <div class="row"><span class="k">目录同步</span><span class="v" id="cSynced">—</span></div>
+  <div class="actions" style="margin-top:14px">
+    <button id="btnOpenConsole">打开完整控制台</button>
+  </div>
+  <div class="hint">
+    完整控制台（渠道登录、用量看板、Key 轮换）带 <code>frame-ancestors 'none'</code> 与 HttpOnly 会话，
+    无法在此页内嵌。上方只读数据由本机 API Key 临时换会话拉取，用完即丢弃。
+  </div>
+</div>
+
+<div class="card">
   <h2>日志
     <button class="ghost" id="btnLog" style="padding:5px 12px;font-size:13px">刷新</button>
   </h2>
@@ -291,6 +311,42 @@
     });
   }
 
+  function fmtTime(ms) {
+    if (!ms) return "从未";
+    var d = new Date(ms);
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return (d.getMonth() + 1) + "/" + d.getDate() + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function loadConsole() {
+    return exec("sh " + q(CTL) + " console").then(function (r) {
+      if (r.errno !== 0) throw new Error(r.stderr || "读取控制台失败");
+      var d;
+      try {
+        d = JSON.parse(r.stdout);
+      } catch (e) {
+        throw new Error("控制台返回了无法解析的内容");
+      }
+      var catalog = d.catalog || [];
+      var routable = catalog.filter(function (m) { return m.routable; }).length;
+      var usable = catalog.filter(function (m) {
+        return m.routable && (m.availability === "listed" || m.availability === "available" || m.availability === "unknown");
+      }).length;
+
+      var s = d.settings || {};
+      document.getElementById("cEnabled").textContent = s.enabled === false ? "已暂停" : "已启用";
+      document.getElementById("cChannels").textContent =
+        (d.channels && d.channels.state === "ready") ? "已就绪" : ((d.channels && d.channels.state) || "未知");
+      document.getElementById("cEac").textContent =
+        d.eacAuth && d.eacAuth.authorized ? "已授权" : (d.eacAuth && d.eacAuth.available ? "未授权" : "不可用");
+      document.getElementById("cModels").textContent = usable + " / " + catalog.length + " 可用";
+      document.getElementById("cInterval").textContent = (s.probeIntervalMinutes || 15) + " 分钟";
+      document.getElementById("cMaxTokens").textContent = (s.defaultMaxTokens || 0) + " tokens";
+      document.getElementById("cSynced").textContent = fmtTime(d.catalogSyncedAt);
+      return d;
+    });
+  }
+
   function act(key, label) {
     setBusy(true);
     toast(label + "中…");
@@ -371,6 +427,32 @@
   document.getElementById("btnLog").onclick = function () {
     loadLog().then(function () { toast("已刷新"); });
   };
+  document.getElementById("btnConsole").onclick = function () {
+    document.getElementById("btnConsole").disabled = true;
+    loadConsole().then(function () {
+      toast("控制台数据已更新");
+    }).catch(function (e) {
+      toast(e.message || String(e), true);
+    }).then(function () {
+      document.getElementById("btnConsole").disabled = false;
+    });
+  };
+  document.getElementById("btnOpenConsole").onclick = function () {
+    var port = current.port || 15656;
+    var host = current.host || "127.0.0.1";
+    var url = "http://" + host + ":" + port + "/";
+    // WebView 内无法内嵌（frame-ancestors 'none'），交给系统浏览器
+    var k = ks();
+    if (k && typeof k.openUrl === "function") {
+      k.openUrl(url);
+      return;
+    }
+    if (typeof k !== "undefined" && k && typeof k.exec === "function") {
+      exec("am start -a android.intent.action.VIEW -d " + q(url) + " >/dev/null 2>&1");
+      return;
+    }
+    window.open(url, "_blank");
+  };
 
   document.getElementById("key").onclick = function () {
     var text = current.key;
@@ -384,10 +466,18 @@
     }
   };
 
-  refresh().then(loadLog).catch(function (e) {
-    toast(e.message || String(e), true);
-    document.getElementById("subtitle").textContent = "无法读取状态";
-  });
+  refresh()
+    .then(function () {
+      return loadLog();
+    })
+    .then(function () {
+      // 控制台取不到不是致命错，不让它影响主状态展示
+      return loadConsole().catch(function () {});
+    })
+    .catch(function (e) {
+      toast(e.message || String(e), true);
+      document.getElementById("subtitle").textContent = "无法读取状态";
+    });
 })();
 </script>
 </body>
