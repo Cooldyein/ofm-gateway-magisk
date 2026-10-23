@@ -14,6 +14,15 @@ VCODE=$(sed -n 's/^versionCode=//p' "$ROOT/module/module.prop")
 WORK="$ROOT/.build"
 DIST="$ROOT/dist"
 
+# module.prop 的键名写错（如误写成 .description）不会报错，只是管理器静默忽略该字段，
+# 所以在这里显式校验必填键与不允许的键
+PROP="$ROOT/module/module.prop"
+for key in id name version versionCode author description; do
+  grep -q "^$key=" "$PROP" || { echo "module.prop 缺少必需的键：$key" >&2; exit 1; }
+done
+BAD=$(grep -n '^[^a-zA-Z]' "$PROP" | grep -v '^[0-9]*:#' || true)
+[ -z "$BAD" ] || { echo "module.prop 有非法行（键名不能以非字母开头）：" >&2; echo "$BAD" >&2; exit 1; }
+
 # update.json 与实际包不一致时，管理器会推错版本或反复提示更新
 JSON_VERSION=$(sed -n 's/.*"version": *"v\{0,1\}\([^"]*\)".*/\1/p' "$ROOT/update.json")
 JSON_CODE=$(sed -n 's/.*"versionCode": *\([0-9][0-9]*\).*/\1/p' "$ROOT/update.json")
