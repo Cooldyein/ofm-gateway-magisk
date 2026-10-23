@@ -172,12 +172,12 @@
   <div class="row"><span class="k">刷新间隔</span><span class="v" id="cInterval">—</span></div>
   <div class="row"><span class="k">输出上限</span><span class="v" id="cMaxTokens">—</span></div>
   <div class="row"><span class="k">目录同步</span><span class="v" id="cSynced">—</span></div>
-  <div class="actions" style="margin-top:14px">
-    <button id="btnOpenConsole">打开完整控制台</button>
-  </div>
+  <div class="row"><span class="k">控制台</span><span class="v mono" id="cUrl" style="cursor:pointer">—</span></div>
+  <div class="row"><span class="k">登录 Key</span><span class="v mono" id="cKey" style="cursor:pointer">—</span></div>
   <div class="hint">
-    完整控制台（渠道登录、用量看板、Key 轮换）带 <code>frame-ancestors 'none'</code> 与 HttpOnly 会话，
-    无法在此页内嵌。上方只读数据由本机 API Key 临时换会话拉取，用完即丢弃。
+    点地址或 Key 即可复制。在浏览器打开地址后，把 Key 粘进登录框即可进入完整控制台
+    （渠道登录、用量看板、Key 轮换）。该页带 <code>frame-ancestors 'none'</code>
+    与 HttpOnly 会话，无法在本页内嵌。
   </div>
 </div>
 
@@ -272,6 +272,7 @@
   }
 
   var current = {};
+  var consoleUrl = "";
 
   function render(info) {
     current = info;
@@ -286,6 +287,12 @@
     document.getElementById("addr").textContent =
       "http://" + (info.host || "127.0.0.1") + ":" + (info.port || "—") + "/v1";
     document.getElementById("key").textContent = info.key || "（尚未生成）";
+    // 控制台卡里的地址与 Key 跟着状态一起更新，不依赖 loadConsole 的先后
+    document.getElementById("cKey").textContent = info.key || "（未就绪）";
+    if (info.port) {
+      consoleUrl = "http://" + (info.host || "127.0.0.1") + ":" + info.port + "/";
+      document.getElementById("cUrl").textContent = consoleUrl;
+    }
     document.getElementById("runtime").textContent = info.runtime || "未解压";
 
     if (document.activeElement !== document.getElementById("port")) {
@@ -343,6 +350,13 @@
       document.getElementById("cInterval").textContent = (s.probeIntervalMinutes || 15) + " 分钟";
       document.getElementById("cMaxTokens").textContent = (s.defaultMaxTokens || 0) + " tokens";
       document.getElementById("cSynced").textContent = fmtTime(d.catalogSyncedAt);
+
+      // 控制台地址与登录 Key（与本机网关同一把）
+      var base = d.baseUrl || ("http://" + (d.bindHost || "127.0.0.1") + ":" + (current.port || 15656));
+      consoleUrl = base.replace(/\/$/, "") + "/";
+      document.getElementById("cUrl").textContent = consoleUrl;
+      var key = current.key || "";
+      document.getElementById("cKey").textContent = key || "（未就绪）";
       return d;
     });
   }
@@ -437,29 +451,19 @@
       document.getElementById("btnConsole").disabled = false;
     });
   };
-  document.getElementById("btnOpenConsole").onclick = function () {
-    var port = current.port || 15656;
-    var host = current.host || "127.0.0.1";
-    // 管理页的同源围栏会拒绝非 http 的 Referer（如 android-app://、
-    // 第三方浏览器自带来源），表现为首次打开 403、手动敲回车才正常。
-    // 用 VIEW intent 直接投递 URL，并先复制到剪贴板作为兵底。
-    var url = "http://" + host + ":" + port + "/";
-
-    copyText(url);
-
-    exec("am start -a android.intent.action.VIEW -d " + q(url) +
-         " --activity-clear-task >/dev/null 2>&1").then(function (r) {
-      if (r.errno !== 0) {
-        // am 不可用时退回 ksu.openUrl
-        var k = ks();
-        if (k && typeof k.openUrl === "function") k.openUrl(url);
-        else toast("已复制地址，请到浏览器粘贴打开", true);
-        return;
-      }
-      toast("已复制地址；若页面报同源错误，请粘到地址栏回车");
-    }).catch(function () {
-      toast("已复制地址，请到浏览器粘贴打开", true);
-    });
+  document.getElementById("cUrl").onclick = function () {
+    if (!consoleUrl) {
+      toast("先点右上「读取」", true);
+      return;
+    }
+    copyText(consoleUrl, "地址已复制，到浏览器打开");
+  };
+  document.getElementById("cKey").onclick = function () {
+    if (!current.key) {
+      toast("尚未生成 Key", true);
+      return;
+    }
+    copyText(current.key, "登录 Key 已复制");
   };
 
   document.getElementById("key").onclick = function () {
