@@ -128,6 +128,7 @@
   <h2>状态 <span class="pill" id="statePill">未知</span></h2>
   <div class="row"><span class="k">PID</span><span class="v mono" id="pid">—</span></div>
   <div class="row"><span class="k">地址</span><span class="v mono" id="addr">—</span></div>
+  <div class="row"><span class="k">局域网</span><span class="v mono" id="lanAddr">—</span></div>
   <div class="row"><span class="k">API Key</span><span class="v mono" id="key">—</span></div>
   <div class="row"><span class="k">运行时</span><span class="v mono" id="runtime">—</span></div>
   <div class="actions" style="margin-top:14px">
@@ -144,11 +145,15 @@
     <input type="number" id="port" min="0" max="65535" inputmode="numeric" placeholder="15656">
   </div>
   <div class="field">
-    <label for="host">监听地址</label>
-    <select id="host">
-      <option value="127.0.0.1">仅本机 127.0.0.1</option>
-      <option value="0.0.0.0">局域网 0.0.0.0</option>
+    <label for="lan">局域网访问（独立中继与独立 Key）</label>
+    <select id="lan">
+      <option value="0">关闭，只允许本机</option>
+      <option value="1">开启</option>
     </select>
+  </div>
+  <div class="field">
+    <label for="lanPort">局域网端口（0 = 自动分配）</label>
+    <input type="number" id="lanPort" min="0" max="65535" inputmode="numeric" placeholder="0">
   </div>
   <div class="field switch">
     <label for="autostart" style="margin:0">开机自启</label>
@@ -285,12 +290,13 @@
 
     document.getElementById("pid").textContent = running ? info.pid || "—" : "—";
     document.getElementById("addr").textContent =
-      "http://" + (info.host || "127.0.0.1") + ":" + (info.port || "—") + "/v1";
+      "http://127.0.0.1:" + (info.port || "—") + "/v1";
     document.getElementById("key").textContent = info.key || "（尚未生成）";
+    document.getElementById("lanAddr").textContent = lanLine(info);
     // 控制台卡里的地址与 Key 跟着状态一起更新，不依赖 loadConsole 的先后
     document.getElementById("cKey").textContent = info.key || "（未就绪）";
     if (info.port) {
-      consoleUrl = "http://" + (info.host || "127.0.0.1") + ":" + info.port + "/";
+      consoleUrl = "http://127.0.0.1:" + info.port + "/";
       document.getElementById("cUrl").textContent = consoleUrl;
     }
     document.getElementById("runtime").textContent = info.runtime || "未解压";
@@ -298,9 +304,18 @@
     if (document.activeElement !== document.getElementById("port")) {
       document.getElementById("port").value = info.port || "";
     }
-    document.getElementById("host").value =
-      info.host === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1";
+    document.getElementById("lan").value = info.lan === "1" ? "1" : "0";
+    if (document.activeElement !== document.getElementById("lanPort")) {
+      document.getElementById("lanPort").value = info.lan_port || "0";
+    }
     document.getElementById("autostart").checked = info.autostart === "1";
+  }
+
+  // 中继实际监听的端口由服务运行期决定，info 读的是落盘值
+  function lanLine(info) {
+    if (info.lan !== "1") return "未开启";
+    if (!info.lan_port || info.lan_port === "0") return "已开启，端口待服务分配";
+    return "端口 " + info.lan_port + "，Key " + (info.lan_key || "（尚未生成）");
   }
 
   function refresh() {
@@ -377,7 +392,8 @@
 
   function save(andRestart) {
     var port = document.getElementById("port").value.trim();
-    var host = document.getElementById("host").value;
+    var lan = document.getElementById("lan").value;
+    var lanPort = document.getElementById("lanPort").value.trim();
     var auto = document.getElementById("autostart").checked ? "1" : "0";
 
     if (port !== "" && !/^[0-9]+$/.test(port)) {
@@ -388,14 +404,25 @@
       toast("端口需在 0–65535 之间", true);
       return;
     }
+    if (lanPort !== "" && !/^[0-9]+$/.test(lanPort)) {
+      toast("局域网端口必须是数字", true);
+      return;
+    }
+    if (lanPort !== "" && (Number(lanPort) < 0 || Number(lanPort) > 65535)) {
+      toast("端口需在 0–65535 之间", true);
+      return;
+    }
 
     setBusy(true);
     var steps = [];
     if (port !== "" && String(current.port) !== port) {
       steps.push("sh " + q(CTL) + " set-config port " + port);
     }
-    if (host !== current.host) {
-      steps.push("sh " + q(CTL) + " set-config host " + q(host));
+    if (lan !== current.lan) {
+      steps.push("sh " + q(CTL) + " set-config lan " + lan);
+    }
+    if (lanPort !== "" && String(current.lan_port) !== lanPort) {
+      steps.push("sh " + q(CTL) + " set-config lan_port " + lanPort);
     }
     if (auto !== current.autostart) {
       steps.push("sh " + q(CTL) + " set-config autostart " + auto);

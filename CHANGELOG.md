@@ -1,5 +1,43 @@
 # 更新日志
 
+## v0.4.0
+
+同步上游到 **2.5.9**（内置运行时原为 2.1.0，跨 48 个版本）。
+
+**构建方式变了**：以前整个运行时从第三方 Android 安装包里原样取出，服务代码因此被锁在
+那个包的版本上。现在 `usr/`（Node 与 Android 依赖库）仍复用，`app/`（服务代码）改为
+从上游仓库按版本组装，升级只需改 `UPSTREAM_VERSION` 重跑构建。
+
+**监听行为变了**：上游从 2.5.x 起只允许服务绑定回环地址，跨设备访问改由它自己的
+局域网中继承担。因此 `config.sh` 里的 `HOST` 已被移除：
+
+- 本机监听固定为 `127.0.0.1`，不再可配；
+- 新增 `LAN`（0/1）与 `LAN_PORT`（0 = 自动分配）；
+- 中继使用独立的 LAN Key，与本机 API Key 互不通用；
+- WebUI 的「监听地址」下拉框换成「局域网访问」开关，状态卡多一行「局域网」。
+
+⚠️ 从 0.3.x 升级时，如果你以前把 `HOST` 改成过 `0.0.0.0`，升级后该行会被忽略，
+需要改在 `LAN=1` 上（或在 WebUI 里开启）。
+
+**渠道变化**：CodeArts、CodeBuddy、WorkBuddy 已从上游渠道包中移除，现为
+LobsterAI、Qoder / Qoder 中国版、TRAE、Cline、Loomy、Raccoon、MiniMax、ZCode、Gemini、
+OpenCode，外加匿名免费车道、Kilo 免费池与 EAC。之前登录过前三家的账号在新面板里不可见。
+
+**免费车道的指纹变了（最要紧的一条）**：上游网关 2026-10-14 把免费车道从 `/zen/v1`
+迁到 `/inference/v1`，客户端 User-Agent 也从 `opencode/1.18.31` 换成
+`opencode/latest/2.0.26/cli`，要求同时带 `x-opencode-session` 与
+`x-opencode-session-id`（外加 `x-session-affinity` / `x-session-id` 镜像），
+并**不再发送** `x-opencode-request`（v1 专用头，v2 收到即 403）。0.3.x 内置的
+2.1.0 用的全是旧值，且工具名集合仍是 `bash/glob/grep/read` 四件套。
+
+**其它**：聚合车道（76 家自带 Key 的提供商，以 `provider/model` 形式出现，2.5.9 把
+`opencode` 换成了 `fleetrelay_t1`）与降级链（`combo:` 虚拟模型）均已接入独立服务；
+新增“已失效模型剔除”、用量统计与备份导入导出页面更新、外发代理链路修正等。
+`/v1/messages`（Anthropic Messages）在 2.1.0 已有，不属于本次新增。
+
+> 上游的「工具输出压缩 / 提示词瘦身」挂在插件适配器上，不经过独立服务，
+> 所以本模块不包含该能力。
+
 ## v0.3.5
 
 尝试修复部分设备安装失败（`Error: Failed to install module script`，错误码 1）。

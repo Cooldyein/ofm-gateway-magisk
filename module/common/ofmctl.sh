@@ -48,6 +48,16 @@ key_of() {
   sed -n 's/.*"forwardKey": *"\([^"]*\)".*/\1/p' "$DATA_DIR/settings.json" 2>/dev/null | head -n 1
 }
 
+lan_key_of() {
+  sed -n 's/.*"standaloneLanKey": *"\([^"]*\)".*/\1/p' "$DATA_DIR/settings.json" 2>/dev/null | head -n 1
+}
+
+# 中继实际监听端口由服务运行期决定（LAN_PORT=0 时自动分配），
+# 落盘的是 standaloneLanPort；未启用时该项可能停在 0
+lan_port_of() {
+  sed -n 's/.*"standaloneLanPort": *\([0-9][0-9]*\).*/\1/p' "$DATA_DIR/settings.json" 2>/dev/null | head -n 1
+}
+
 # 写配置。值由调用方校验过，这里只做整行替换，绝不拼接进 shell
 save_config() {
   _key=$1
@@ -64,25 +74,33 @@ start() {
   rm -f "$PIDFILE"
   cd "$APP_DIR" || return 1
 
+  # 服务只在回环地址上监听；局域网是上游自己的中继（独立 Key），
+  # 由 --lan / --no-lan 开关，并可从配置里指定端口
+  _args="--data-dir $DATA_DIR"
+  [ "$PORT" = "0" ] || _args="--port $PORT $_args"
+  if [ "$LAN" = "1" ]; then
+    _args="$_args --lan"
+    [ "$LAN_PORT" = "0" ] || _args="$_args --lan-port $LAN_PORT"
+  else
+    _args="$_args --no-lan"
+  fi
+
   # 服务输出先进 FIFO，由 stamp_lines 加时间戳再落盘。
   # 这样 node 的 PID 仍是真实进程（$!），启停不受管道影响。
   rm -f "$LOG_FIFO"
   if ! mkfifo -m 0600 "$LOG_FIFO" 2>/dev/null; then
     # 无法建 FIFO（FIFO 文件系统不支持或目录权限）时退化为直接写日志，
     # 否则服务根本起不来
-    OFM_HOME="$DATA_DIR" HOME="$MODDIR" OFM_HOST="$HOST" \
-      "$NODE" packages/standalone/cli.mjs "$@" >>"$LOG_FILE" 2>&1 &
+    OFM_HOME="$DATA_DIR" HOME="$MODDIR" \
+      "$NODE" packages/standalone/cli.mjs $_args >>"$LOG_FILE" 2>&1 &
     echo $! >"$PIDFILE"
     return 0
   fi
   ( stamp_lines <"$LOG_FIFO" >>"$LOG_FILE" ) &
   echo $! >"$LOG_PIDFILE"
 
-  # PORT=0 时不传 --port，让服务沿用自己存下的端口
-  set -- --data-dir "$DATA_DIR"
-  [ "$PORT" = "0" ] || set -- --port "$PORT" "$@"
-  OFM_HOME="$DATA_DIR" HOME="$MODDIR" OFM_HOST="$HOST" \
-    "$NODE" packages/standalone/cli.mjs "$@" >"$LOG_FIFO" 2>&1 &
+  OFM_HOME="$DATA_DIR" HOME="$MODDIR" \
+    "$NODE" packages/standalone/cli.mjs $_args >"$LOG_FIFO" 2>&1 &
   echo $! >"$PIDFILE"
 }
 
@@ -119,8 +137,13 @@ case "$1" in
       PORT_NOW=$(port_of)
       [ -n "$PORT_NOW" ] || PORT_NOW=$PORT
       echo "运行中 (pid $(cat "$PIDFILE"))"
-      echo "地址：http://$HOST:$PORT_NOW/v1"
+      echo "地址：http://127.0.0.1:$PORT_NOW/v1"
       echo "密钥：$(key_of)"
+      if [ "$LAN" = "1" ]; then
+        echo "局域网：端口 $(lan_port_of)，Key $(lan_key_of)"
+      else
+        echo "局域网：未开启"
+      fi
       echo "日志：$LOG_FILE"
     else
       echo "未运行"
@@ -138,14 +161,17 @@ case "$1" in
     PORT_NOW=$(port_of)
     [ -n "$PORT_NOW" ] || PORT_NOW=$PORT
     echo "port=$PORT_NOW"
-    echo "host=$HOST"
+    echo "host=127.0.0.1"
     echo "key=$(key_of)"
+    echo "lan=$LAN"
+    echo "lan_port=$(lan_port_of)"
+    echo "lan_key=$(lan_key_of)"
     echo "autostart=$AUTOSTART"
     echo "data_dir=$DATA_DIR"
     echo "log_file=$LOG_FILE"
     echo "runtime=$(cat "$RT_DIR/.version" 2>/dev/null)"
     ;;
-  # 只允许 WebUI 改这三项，且值必须通过校验；不做任意写
+  # 只允许 WebUI 改这几项，且值必须通过校验；不做任意写
   set-config)
     case "$2" in
       port)
@@ -153,11 +179,16 @@ case "$1" in
         [ "$3" -le 65535 ] || { echo "端口超出范围" >&2; exit 1; }
         save_config PORT "$3" || exit 1
         ;;
-      host)
+      lan)
         case "$3" in
-          127.0.0.1|0.0.0.0) save_config HOST "$3" || exit 1 ;;
-          *) echo "监听地址只能是 127.0.0.1 或 0.0.0.0" >&2; exit 1 ;;
+          0|1) save_config LAN "$3" || exit 1 ;;
+          *) echo "局域网开关只能是 0 或 1" >&2; exit 1 ;;
         esac
+        ;;
+      lan_port)
+        case "$3" in ''|*[!0-9]*) echo "局域网端口必须是数字" >&2; exit 1 ;; esac
+        [ "$3" -le 65535 ] || { echo "端口超出范围" >&2; exit 1; }
+        save_config LAN_PORT "$3" || exit 1
         ;;
       autostart)
         case "$3" in
@@ -181,7 +212,7 @@ case "$1" in
     _key=$(key_of)
     [ -n "$_key" ] || { echo "尚未生成 API Key" >&2; exit 1; }
     command -v curl >/dev/null 2>&1 || { echo "缺少 curl，无法读取控制台" >&2; exit 1; }
-    _base="http://$HOST:$_port"
+    _base="http://127.0.0.1:$_port"
     # cookie 落到数据目录（0700）而不是全局可读的 /data/local/tmp
     _jar="$DATA_DIR/.console.$$"
     _payload=$(printf '{"key":"%s"}' "$_key")
