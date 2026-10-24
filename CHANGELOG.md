@@ -1,5 +1,33 @@
 # 更新日志
 
+## v0.3.5
+
+尝试修复部分设备安装失败（`Error: Failed to install module script`，错误码 1）。
+
+**现象**：安装进度走到 `- Extracting module files` 之后就中断，管理器只显示
+`Failed to install module script`，模块没有装上。0.3.4 的用户反馈中出现这个问题。
+
+**原因**：`customize.sh` 用 `${0%/*}` 推算自己所在的目录。但这个脚本不是被直接执行的，
+而是被 KernelSU / Magisk 的安装器 `source` 进来的，此时 `$0` 指向的是安装器本身，
+不是模块目录。推算失败后，脚本按回退逻辑去找 `/data/adb/modules/ofm_gateway`，
+但安装阶段模块实际位于 `/data/adb/modules_update/ofm_gateway`，两边对不上：
+它去执行 `/data/adb/modules/ofm_gateway/common/runtime.sh`，文件不存在，
+运行时解压这一步直接失败，脚本按设计 `exit 1`，整个安装被判为失败。
+
+**为什么不是所有人都遇到**：回退路径 `/data/adb/modules/ofm_gateway` 是否存在，
+取决于那台设备之前有没有装过本模块。没装过的新设备上这个目录不存在，必然失败；
+装过、目录还在的设备可能恰好能跑通，所以表现为「有人能装、有人装不上」。
+
+**修复**：`customize.sh` 改为优先使用安装器传入的 `$MODPATH`（安装期为
+`/data/adb/modules_update/<模块 id>`），取不到时才退回原来的 `$0` 推导。
+这样无论安装器以 `source` 还是直接执行的方式调用，都能定位到正确的模块目录。
+
+**顺带修正**：此前定位错误还会带来一个不易察觉的隐患：升级时如果旧模块目录仍在，
+安装阶段可能去解旧目录里的运行时，导致装完版本与实际运行时版本不一致。
+修复后安装阶段只从当前安装包解压，不会再串到旧版本。
+
+> 若安装仍然失败，请附上日志（root 执行 `logcat -d -s ksud:* | tail -n 80`）。
+
 ## v0.3.4
 
 一次模块整体审查后的修复：
