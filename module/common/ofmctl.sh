@@ -1,7 +1,23 @@
 #!/system/bin/sh
 # 启停与状态查看。由 service.sh（开机）和 action.sh（KernelSU 动作按钮）共用。
 
-MODDIR=${OFM_MODDIR:-$(cd "${0%/*}/.." && pwd)}
+# 模块目录解析：管理器/开机脚本的调用方式并不统一 —— Magisk 把目录放进 MODDIR 环境变量，
+# KernelSU 则是 cd 到模块目录再 `sh <脚本>`（此时 $0 只有文件名，推不出目录）。
+# 所以按「显式传入 → $0 所在目录 → 其上级目录 → cwd → cwd 上级」逐个试，
+# 以「该目录里真有 config.sh」为准；都不成立才退回固定路径。
+resolve_moddir() {
+  for _c in "$OFM_MODDIR" "$MODDIR" "$_self_dir" "$_self_dir/.." "$(pwd)" "$(pwd)/.."; do
+    [ -n "$_c" ] || continue
+    if [ -f "$_c/config.sh" ]; then (cd "$_c" 2>/dev/null && pwd); return 0; fi
+  done
+  return 1
+}
+case "$0" in
+  */*) _self_dir=$(cd "${0%/*}" 2>/dev/null && pwd) ;;
+  *) _self_dir= ;;
+esac
+_saved_moddir=$MODDIR
+MODDIR=$(resolve_moddir) || MODDIR=${_saved_moddir:-/data/adb/modules/ofm_gateway}
 . "$MODDIR/config.sh"
 
 RT_DIR=/data/adb/ofm-runtime
@@ -205,7 +221,9 @@ case "$1" in
     [ -f "$LOG_FILE" ] || { echo "暂无日志"; exit 0; }
     tail -n "$_n" "$LOG_FILE"
     ;;
-  # 控制台数据：用 API Key 换会话再拉摘要，密钥不进 URL、不落盘
+  # 控制台数据：用 API Key 换会话再拉摘要，密钥不进 URL、不落盘。
+  # 会话 cookie 从响应头里取、再用 Cookie 头带回：不依赖 curl 的 -c/-b cookie jar
+  # （部分环境里的 curl 是只支持 -s/-H/-d/-o 的精简垫片，-c/-b 会让请求直接失败）
   console)
     _port=$(port_of)
     [ -n "$_port" ] || _port=$PORT
@@ -213,17 +231,16 @@ case "$1" in
     [ -n "$_key" ] || { echo "尚未生成 API Key" >&2; exit 1; }
     command -v curl >/dev/null 2>&1 || { echo "缺少 curl，无法读取控制台" >&2; exit 1; }
     _base="http://127.0.0.1:$_port"
-    # cookie 落到数据目录（0700）而不是全局可读的 /data/local/tmp
-    _jar="$DATA_DIR/.console.$$"
     _payload=$(printf '{"key":"%s"}' "$_key")
-    if ! curl -s -m 10 -c "$_jar" -X POST "$_base/api/management/session" \
-        -H 'Content-Type: application/json' -H "Origin: $_base" -d "$_payload" >/dev/null 2>&1; then
-      rm -f "$_jar"; echo "无法连接服务" >&2; exit 1
-    fi
-    curl -s -m 15 -b "$_jar" "$_base/api/management/summary"
-    _rc=$?
-    rm -f "$_jar"
-    [ "$_rc" = "0" ] || exit 1
+    _resp=$(curl -s -i -m 10 -X POST "$_base/api/management/session" \
+        -H 'Content-Type: application/json' -H "Origin: $_base" -d "$_payload" 2>/dev/null)
+    [ -n "$_resp" ] || { echo "无法连接服务" >&2; exit 1; }
+    # 取第一段 Set-Cookie 的 name=value（到分号为止）
+    _ck=$(printf '%s\n' "$_resp" | sed -n 's/^[Ss]et-[Cc]ookie: *\([^;]*\).*/\1/p' | head -n 1 | tr -d '\r')
+    [ -n "$_ck" ] || { echo "登录控制台失败（API Key 可能已更换）" >&2; exit 1; }
+    _sum=$(curl -s -m 15 -H "Cookie: $_ck" "$_base/api/management/summary" 2>/dev/null)
+    [ -n "$_sum" ] || { echo "读取控制台数据失败" >&2; exit 1; }
+    printf '%s\n' "$_sum"
     ;;
   *) echo "用法：$0 start|stop|restart|status|info|set-config|log|console" >&2; exit 1 ;;
 esac

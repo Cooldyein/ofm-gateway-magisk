@@ -2,5 +2,7 @@
 .cache/
 dist/
 tmp/
+tmp5/
 .aicode/
+.dsh-meow/
 docs/
