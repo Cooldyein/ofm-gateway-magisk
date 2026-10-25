@@ -1,0 +1,144 @@
+name: Build & Release
+
+# 推 tag 即自动构建并发版；也可在 Actions 页面手动指定一个已有 tag 重跑。
+# 运行时（usr/ 那 34 MB 的 Node）不进仓库，也不在手机上上传：
+# 从基线 Release 的 zip 里取现成的 runtime-arm64.tgz，服务代码仍按 UPSTREAM_VERSION
+# 从上游源码现场组装。整个 36 MB 的成品在 runner 本地生成，只走 GitHub 内网上传。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建并发版的 tag（必须已存在于仓库）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  # 提供 usr/ 版 Node 运行时的基线包。升级 Node 时改这里即可，
+  # 前提是那个 tag 的 Release 里有 OFM_Gateway_Magisk_*.zip 附件。
+  RUNTIME_BASE_TAG: v0.4.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 解析本次的 tag 与版本号
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "tag 必须以 v 开头：$TAG" >&2; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "本次构建：tag=$TAG"
+
+      - name: 检出该 tag 的代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: 核对 module.prop 与 update.json 的版本一致
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          # build.sh 里也有同样的校验，这里提前跑一遍，
+          # 让「版本号忘了改」在日志第一屏就暴露，而不是等到打包阶段
+          PROP_VER=$(sed -n 's/^version=//p' module/module.prop)
+          PROP_CODE=$(sed -n 's/^versionCode=//p' module/module.prop)
+          JSON_VER=$(sed -n 's/.*"version": *"v\{0,1\}\([^"]*\)".*/\1/p' update.json)
+          JSON_CODE=$(sed -n 's/.*"versionCode": *\([0-9][0-9]*\).*/\1/p' update.json)
+          echo "module.prop: $PROP_VER ($PROP_CODE) / update.json: $JSON_VER ($JSON_CODE)"
+          [ "$PROP_VER" = "$VERSION" ] || { echo "tag 是 $VERSION，module.prop 是 $PROP_VER" >&2; exit 1; }
+          [ "$PROP_VER" = "$JSON_VER" ] || { echo "module.prop 与 update.json 的 version 不一致" >&2; exit 1; }
+          [ "$PROP_CODE" = "$JSON_CODE" ] || { echo "module.prop 与 update.json 的 versionCode 不一致" >&2; exit 1; }
+
+      - name: 从基线 Release 取 Node 运行时
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_TAG: ${{ env.RUNTIME_BASE_TAG }}
+        run: |
+          mkdir -p /tmp/base
+          gh release download "$BASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'OFM_Gateway_Magisk_*.zip' \
+            --dir /tmp/base
+          ls -lh /tmp/base
+          unzip -o -q /tmp/base/OFM_Gateway_Magisk_*.zip 'runtime/*' -d /tmp/base-x
+          RUNTIME=/tmp/base-x/runtime/runtime-arm64.tgz
+          [ -f "$RUNTIME" ] || { echo "基线包里没有 runtime/runtime-arm64.tgz" >&2; exit 1; }
+          # 运行时必须含 usr/bin/node，build.sh 只取 usr/ 这一段
+          tar -tzf "$RUNTIME" | grep -qx 'usr/bin/node' || { echo "运行时里缺 usr/bin/node" >&2; exit 1; }
+          echo "OFM_RUNTIME_TGZ=$RUNTIME" >> "$GITHUB_ENV"
+          echo "运行时来自 $BASE_TAG：$(du -h "$RUNTIME" | cut -f1)"
+
+      - name: 组装服务代码并打包
+        run: |
+          # OFM_RUNTIME_TGZ 由上一步写进 $GITHUB_ENV，这里直接读；
+          # 不能用 ${{ env.xxx }} 引用它——那种写法在解析阶段就取值了，那时还是空的
+          OFM_NODE_RUNTIME="$OFM_RUNTIME_TGZ" sh scripts/build.sh
+          ls -lh dist/
+          echo "OFM_ZIP=$(ls dist/OFM_Gateway_Magisk_*.zip)" >> "$GITHUB_ENV"
+
+      - name: 生成 Release 正文
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          python3 scripts/changelog-section.py "$VERSION" > /tmp/notes.md
+          {
+            cat /tmp/notes.md
+            echo
+            echo '---'
+            echo
+            echo '### 安装'
+            echo
+            echo '下载下方附件，在 KernelSU / Magisk 模块页面选「从本地安装」，重启手机。'
+            echo
+            echo '刷入方式与其他细节见 [README](https://github.com/'"$GITHUB_REPOSITORY"'#安装)。'
+          } > /tmp/release-body.md
+          echo "===== 正文 ====="; cat /tmp/release-body.md
+
+      - name: 创建或更新 Release 并挂上附件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，更新正文"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file /tmp/release-body.md
+          else
+            echo "创建 Release $TAG"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file /tmp/release-body.md
+          fi
+          # 同名附件用 --clobber 覆盖：手动重跑工作流时不会因已存在而失败
+          gh release upload "$TAG" "$OFM_ZIP" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name)  \(.state)  \(.size) bytes"'
+
+      - name: 核对 update.json 里的 zipUrl 与产物对得上
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          EXPECTED="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$OFM_ZIP")"
+          ACTUAL=$(sed -n 's/.*"zipUrl": *"\([^"]*\)".*/\1/p' update.json)
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "update.json 的 zipUrl 与本次产物不一致：" >&2
+            echo "  期望：$EXPECTED" >&2
+            echo "  实际：$ACTUAL" >&2
+            exit 1
+          fi
+          echo "zipUrl 核对通过：$ACTUAL"
