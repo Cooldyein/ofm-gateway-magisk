@@ -208,9 +208,22 @@ for _d in packages/standalone/cli.mjs packages/standalone/service.mjs vendor/cha
   [ -e "$APP_DIR/$_d" ] || { echo "app 组装不完整：缺少 $_d" >&2; exit 1; }
 done
 
+# OpenAI 兼容修补：chat/completions 入口只认 system/user/assistant/tool，
+# 收到 role:"developer" 直接 400。新版客户端（DSH 的 pi-ai）对自定义 baseURL
+# 会把握手用的系统提示发成 developer，于是第一个请求就被拒 —— 表现为
+# 「换这个通道一个字都发不出去」。上游自己的 /v1/responses 本来就接受
+# developer（折成 system），这里按同样语义把 chat/completions 补齐。
+# 锚点找不到就构建失败，不会出一个「看起来修了」的包。
+if _node=$(command -v node 2>/dev/null); then
+  "$_node" "$ROOT/scripts/openai-developer-compat.mjs" "$APP_DIR" ||
+    { echo "OpenAI 兼容修补失败（上游结构可能变了）" >&2; exit 1; }
+else
+  echo "没有 node，无法做 OpenAI 兼容修补" >&2; exit 1
+fi
+
 # 把 service.mjs 的 import 图整个走一遍：漏文件在这里就炸，
 # 不用等刷进设备、开机后才发现 ERR_MODULE_NOT_FOUND
-if _node=$(command -v node 2>/dev/null); then
+if [ -n "$_node" ]; then
   "$_node" --input-type=module -e "import('file://$APP_DIR/packages/standalone/service.mjs')" ||
     { echo "app 的 import 图不完整（上面是缺的模块）" >&2; exit 1; }
 else

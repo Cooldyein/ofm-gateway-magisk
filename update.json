@@ -1,6 +1,6 @@
 {
-  "version": "v0.4.3",
-  "versionCode": 14,
-  "zipUrl": "https://github.com/luoyi0914/ofm-gateway-magisk/releases/download/v0.4.3/OFM_Gateway_Magisk_v0.4.3_patch.zip",
+  "version": "v0.4.4",
+  "versionCode": 15,
+  "zipUrl": "https://github.com/luoyi0914/ofm-gateway-magisk/releases/download/v0.4.4/OFM_Gateway_Magisk_v0.4.4_patch.zip",
   "changelog": "https://raw.githubusercontent.com/luoyi0914/ofm-gateway-magisk/main/CHANGELOG.md"
 }

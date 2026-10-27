@@ -1,5 +1,36 @@
 # 更新日志
 
+## v0.4.4
+
+**修：换用新版客户端时，这个网关会直接 400「一句话都发不出去」。**
+
+现象是请求一进 `/v1/chat/completions` 就被拒：
+
+```json
+{"error":{"message":"unsupported message role: developer","type":"invalid_request_error","param":null}}
+```
+
+原因不在鉴权，也不在模型名。上游网关的 chat/completions 入口只认
+`system / user / assistant / tool` 四个角色，收到 `developer` 直接抛错；而新版客户端
+（DeepSeek Harness 的 pi-ai 适配层等）对**自定义 baseURL** 会把握手用的系统提示
+发成 `role: "developer"` —— 于是第一个请求就失败，表现就是「这个通道连"你好"都发不出去」。
+上游自己的 `/v1/responses` 入口本来就把 `developer` 折成 `system`，说明这是
+chat/completions 这条路的缺口，而不是不兼容。
+
+修法只有一处：`convertMessage` 里把 `developer` 与 `system` 同样处理
+（`business.mjs` 与 `vendor/channel-pack/pack.js` 两份一起补）。
+新增 `scripts/openai-developer-compat.mjs` 在构建期做这个修补：
+**锚点找不到就构建失败**，不会出一个「看起来修了」的包；重复执行可识别已修补形态。
+
+验证方式（同一模型、同一请求，只改第一个消息的 role）：
+
+| 请求首条消息 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `role: "system"` | 正常 | 正常 |
+| `role: "developer"` | 400 `unsupported message role` | 正常，与 system 等价 |
+
+**这一版没有其它改动。** 渠道包与模型目录完全沿用 v0.4.3（上游 2.7.2）。
+
 ## v0.4.3
 
 **同步上游 2.5.9 → 2.7.2**，跨过 2.6.0、2.7.0、2.7.1、2.7.2 四个版本：
