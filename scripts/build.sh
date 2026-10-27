@@ -3,26 +3,29 @@
 #
 # 用法：
 #   ./scripts/build.sh                 完整包：组装 app + 带 usr 运行时（约 36 MB）
-#   ./scripts/build.sh --patch         增量包：只带 app（约 1.9 MB），复用设备上的 usr
+#   ./scripts/build.sh --patch         增量包：只带 app（约 3.4 MB），复用设备上的 usr
 #   ./scripts/build.sh --usr <src>     指定 usr 来源（usr 目录，或含 usr/ 的 tgz）
 #   ./scripts/build.sh --app <dir>     复用已组装好的 app 目录，跳过上游拉取（离线构建）
-#   ./scripts/build.sh --upstream <v>  指定上游服务版本（默认 2.5.9）
+#   ./scripts/build.sh --upstream <v>  指定上游服务版本（默认 2.7.2）
 #
 # 运行时 = Node（含 Android 依赖库） + 上游独立服务源码。
 # 仓库不存二进制：Node 侧放 .cache/，服务代码现场从上游取，都不进版本库。
 #
 # 为什么分两种包：
 #   usr/ 是 Node 与它的 Android 依赖库，解压后 90 MB，压成 33 MB，几乎不随版本变化；
-#   app/ 是上游服务代码，解压后 7.5 MB，压成 1.9 MB，每次升级变的正是它。
+#   app/ 是上游服务代码，2.7.x 解压后 12 MB，压成约 3.4 MB，每次升级变的正是它。
 #   完整包两块都带；增量包只带 app，安装时核对设备上 usr 的指纹后原地复用。
-#   于是日常升级的下载量从 36 MB 降到约 2 MB。
+#   于是日常升级的下载量从 36 MB 降到约 3.4 MB。
+#
+# 上游 2.6 起仓库里多了约 100 MB 的平台二进制（Windows 工作台引擎 + 分片），
+# Android 用不上：拉源码用 partial clone + sparse，组装时也不带进 app/。
 
 set -e
 
 ROOT=$(cd "${0%/*}/.." && pwd)
 VERSION=$(sed -n 's/^version=//p' "$ROOT/module/module.prop")
 VCODE=$(sed -n 's/^versionCode=//p' "$ROOT/module/module.prop")
-UPSTREAM_VERSION=${UPSTREAM_VERSION:-2.5.9}
+UPSTREAM_VERSION=${UPSTREAM_VERSION:-2.7.2}
 REPO_URL=${OFM_SOURCE_REPO:-https://github.com/Ebony-Vinyl/dsh-our-free-model.git}
 # 构建目录放到系统临时区：proot 下在工作区内跑 git clone / tar 容易被静默限制
 WORK=${OFM_BUILD_DIR:-${TMPDIR:-/tmp}/ofm-build}
@@ -128,31 +131,61 @@ if [ -n "$APP_SRC" ]; then
 else
   # 服务代码从源码组装：升级服务逻辑不必等上游重新出 APK
   SRC_DIR="$WORK/src"
-  git clone --depth 1 --branch "v$UPSTREAM_VERSION" "$REPO_URL" "$SRC_DIR" 2>/dev/null ||
-    git clone --depth 1 "$REPO_URL" "$SRC_DIR"
+
+  # 上游仓库里有约 100 MB 的平台二进制（65 MB 的 Windows 工作台引擎 + 33.5 MB 分片），
+  # Android 一点都用不上。全量浅克隆要在这台手机上拖十几分钟且几乎必断，
+  # 所以用 partial clone + sparse 只下载真要打进包的那 12 MB。
+  # 老 git 或不支持 partial clone 的代理退回全量浅克隆（慢，但总能成）。
+  fetch_src() {
+    _tag="v$UPSTREAM_VERSION"
+    rm -rf "$SRC_DIR"
+    if git clone --filter=blob:none --no-checkout --depth 1 --branch "$_tag" \
+         --single-branch "$REPO_URL" "$SRC_DIR" 2>/dev/null &&
+       git -C "$SRC_DIR" sparse-checkout set --no-cone \
+         '/package.json' '/icon.svg' \
+         '/src/*' '!/src/engine-parts/*' \
+         '/packages/standalone/*' '!/packages/standalone/frontend/*' \
+         '/vendor/channel-pack/*' 2>/dev/null &&
+       git -C "$SRC_DIR" checkout "$_tag" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "partial clone 不可用，退回全量浅克隆（约 100 MB）" >&2
+    rm -rf "$SRC_DIR"
+    git clone --depth 1 --branch "$_tag" --single-branch "$REPO_URL" "$SRC_DIR"
+  }
+
+  fetch_src || { echo "拉不到上游源码：$REPO_URL（v$UPSTREAM_VERSION）" >&2; exit 1; }
+
   GOT=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$SRC_DIR/package.json" | head -n 1)
   [ "$GOT" = "$UPSTREAM_VERSION" ] || {
     echo "上游版本不符：期望 $UPSTREAM_VERSION，取到 $GOT" >&2
     exit 1
   }
 
-  # 独立服务实际 import 的闭包：src/ + packages/standalone/ + vendor/channel-pack/
+  # 独立服务实际运行所需：src/ + packages/standalone/ + vendor/channel-pack/
+  #
+  # 上游 2.6 起 standalone 多了 workbench / library / providers / routing /
+  # client-terminal 等模块，逐个列文件清单迟早漏一个 —— 漏了就是开机即
+  # ERR_MODULE_NOT_FOUND。所以整目录复制，只排掉开发期的东西。
   python3 - "$SRC_DIR" "$APP_DIR" <<'PY'
 import os, shutil, sys
 src, app = sys.argv[1], sys.argv[2]
 os.makedirs(app, exist_ok=True)
-for d in ('src',):
-    shutil.copytree(os.path.join(src, d), os.path.join(app, d), dirs_exist_ok=True)
 
-st = os.path.join(src, 'packages/standalone')
-dt = os.path.join(app, 'packages/standalone')
-os.makedirs(dt, exist_ok=True)
-for name in ('cli.mjs', 'service.mjs', 'management.mjs', 'login-terminal.mjs',
-             'open-external.mjs', 'eac.mjs', 'package.json'):
-    shutil.copy2(os.path.join(st, name), os.path.join(dt, name))
-for d in ('channels', 'web'):
-    shutil.copytree(os.path.join(st, d), os.path.join(dt, d), dirs_exist_ok=True)
+def copy(rel, ignore=()):
+    shutil.copytree(os.path.join(src, rel), os.path.join(app, rel),
+                    ignore=shutil.ignore_patterns(*ignore), dirs_exist_ok=True)
 
+# engine-parts 是 Windows 引擎的 8 个分片（33.5 MB），Android 上跑不了；
+# 留着会把 app 块从 3 MB 顶到 36 MB，增量包就没意义了
+copy('src', ('engine-parts',))
+
+# frontend/ 是管理页的 React 源码，运行时用的是构建好的 web/ 产物；
+# node_modules 与 lock 只有开发时装依赖用得上
+copy('packages/standalone', ('node_modules', 'package-lock.json',
+                            'tsconfig.json', 'frontend'))
+
+# 渠道包仍按清单取：同目录的 src/*.ts 是 TypeScript 源码，运行只要构建产物
 vp = os.path.join(src, 'vendor/channel-pack')
 dv = os.path.join(app, 'vendor/channel-pack')
 os.makedirs(dv, exist_ok=True)
@@ -162,15 +195,38 @@ for name in ('pack.js', 'qoder-auth-wasm.wasm', 'LICENSE', 'NOTICE.md', 'package
         shutil.copytree(s, os.path.join(dv, name), dirs_exist_ok=True)
     else:
         shutil.copy2(s, os.path.join(dv, name))
+
+# 引擎的图标：读不到也不影响启动（try/catch），顺手带上
+icon = os.path.join(src, 'icon.svg')
+if os.path.isfile(icon):
+    shutil.copy2(icon, os.path.join(app, 'icon.svg'))
 PY
 fi
 
 # ofmctl.sh 以 "$RT_DIR/app" 为工作目录启动 CLI，层级不能变
-for _d in packages/standalone/cli.mjs vendor/channel-pack/pack.js; do
+for _d in packages/standalone/cli.mjs packages/standalone/service.mjs vendor/channel-pack/pack.js; do
   [ -e "$APP_DIR/$_d" ] || { echo "app 组装不完整：缺少 $_d" >&2; exit 1; }
 done
 
+# 把 service.mjs 的 import 图整个走一遍：漏文件在这里就炸，
+# 不用等刷进设备、开机后才发现 ERR_MODULE_NOT_FOUND
+if _node=$(command -v node 2>/dev/null); then
+  "$_node" --input-type=module -e "import('file://$APP_DIR/packages/standalone/service.mjs')" ||
+    { echo "app 的 import 图不完整（上面是缺的模块）" >&2; exit 1; }
+else
+  echo "没有 node，跳过 import 图检查（CI 与本机都应该有）" >&2
+fi
+
 tar -czf "$WORK/module/runtime/app.tgz" -C "$WORK" app
+
+# app 块不该超过 10 MB。超了八成是把 Windows 引擎分片（33.5 MB）打进去了，
+# 那增量包会从 3 MB 涨回 36 MB，双包机制直接失效 —— 宁可构建失败
+_app_bytes=$(wc -c <"$WORK/module/runtime/app.tgz" | tr -d ' ')
+[ "$_app_bytes" -lt 10485760 ] || {
+  echo "app.tgz 有 $((_app_bytes / 1048576)) MB，超过 10 MB 上限；检查 engine-parts 是否被打进 app/" >&2
+  exit 1
+}
+echo "app.tgz：$((_app_bytes / 1048576)).$((_app_bytes % 1048576 * 10 / 1048576)) MB"
 
 # ---------------- usr：按模式决定带不带 ----------------
 

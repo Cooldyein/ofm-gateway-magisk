@@ -1,5 +1,41 @@
 # 更新日志
 
+## v0.4.3
+
+**同步上游 2.5.9 → 2.7.2**，跨过 2.6.0、2.7.0、2.7.1、2.7.2 四个版本：
+
+- 模型工作台（内嵌 magpie 引擎）、订阅车道（Codex / Claude / Gemini 订阅导入与额度查询）、
+  三种智能路由策略、原生 Gemini 网关、客户端启动器；
+- 渠道收紧：WorkBuddy 国内版、WorkBuddy 国际版、华为云与 CodeArts 在插件端与桌面端一并移除，
+  已登录的旧账号不会被删除，只是撤回进入路径。
+
+**工作台在 Android 上用不了，这一版也没法让它可用。** 上游的 magpie 引擎只发布
+`win32-x64` 一种构建（65 MB 可执行文件 + 33.5 MB 分片），没有 arm64 版本。
+模块不带这些平台二进制，因此工作台相关接口会返回 engine unavailable，
+**网关主体不受影响**：模型列表、推理、API Key、局域网中继都正常。
+实测环境：本机 arm64 + 模块自带 Node 24.18，`/v1/models` 返回 200。
+
+**打包脚本跟着改了三处**，否则这一版刷进去开不了机：
+
+1. `packages/standalone/` 改成整目录复制。上游 2.6 起多了 `workbench.mjs`、
+   `library.mjs`、`providers.mjs`、`routing.mjs`、`client-terminal.mjs`，
+   `management.mjs` 直接 import 了它们 —— 旧版那份 7 个文件的白名单会漏，
+   漏一个就是启动即 `ERR_MODULE_NOT_FOUND`。
+2. `src/engine-parts/`（33.5 MB，Windows 引擎分片）与 `vendor/magpie/` 完全不带。
+   照旧整拷 `src/` 会让 app 块从 3 MB 顶到 36 MB，增量包直接失去意义。
+3. 拉上游源码改用 partial clone + sparse，只下载要打进包的约 12 MB；
+   仓库里另外 100 MB 平台二进制不再拖。
+
+另外加了两道构建期检查：用 node 把 `service.mjs` 的 import 图整体 import 一遍
+（漏文件当场失败，不用等刷进设备），以及 app.tgz 超过 10 MB 直接报错。
+
+**体积**：app 从 1.9 MB 涨到约 3.4 MB（新增工作台、订阅车道、管理页），
+增量包仍是完整包（约 36 MB）的十分之一。
+
+**更新通道**：从这一版起 `update.json` 指向 `_patch.zip`，日常升级走增量包。
+装在 v0.4.0 / v0.4.1 的设备没有 `usr-rev` 指纹，管理器里更新会明确中止并提示改刷完整包 ——
+先手动刷一次 v0.4.3 完整包（或 v0.4.2 完整包），之后就都走增量包了。
+
 ## v0.4.2
 
 **升级包从 35 MB 降到 2 MB。** 之前每发一版，整包都要重下 36 MB，
