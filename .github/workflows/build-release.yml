@@ -31,7 +31,7 @@ env:
   #
   # v0.4.2 发完之后建议改成 v0.4.2：那之后的基线是规整好的 usr.tgz，
   # 不必每次从老格式整包里抽 usr 重打（内容相同，只是省一步）。
-  RUNTIME_BASE_TAG: v0.4.0
+  RUNTIME_BASE_TAG: v0.4.2
 
 jobs:
   release:
