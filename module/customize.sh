@@ -6,9 +6,24 @@
 MODDIR=${MODPATH:-${0%/*}}
 [ -f "$MODDIR/config.sh" ] || MODDIR=/data/adb/modules/ofm_gateway
 
-if ! OFM_MODDIR="$MODDIR" sh "$MODDIR/common/runtime.sh" now; then
+# abort 由管理器安装器提供（Magisk / KernelSU 都有）；单独 sh 跑本脚本时没有，给个退路
+fail() {
+  if command -v abort >/dev/null 2>&1; then abort "$1"; else echo "$1" >&2; exit 1; fi
+}
+
+OFM_MODDIR="$MODDIR" sh "$MODDIR/common/runtime.sh" now
+_rc=$?
+
+# 退出码 2 = 增量包要求的 usr 指纹与本机不符（设备上没装过基线包，
+# 或跳过了一个换 Node 的版本）。这不是文件损坏，要明确告诉用户怎么办。
+if [ $_rc = 2 ]; then
+  fail "这个增量包只含服务代码（约 2 MB），没有 Node 运行时。
+请改刷同版本的完整包（文件名不带 _patch 的那个），装完后即可继续用增量包更新。"
+fi
+
+if [ $_rc != 0 ]; then
   # 解压失败（包损坏、空间不足）要让安装可见地失败，
   # 否则重启后服务起不来，用户只会看到「未运行」
-  echo "运行时解压失败：$MODDIR/runtime/runtime-arm64.tgz" >&2
-  exit 1
+  fail "运行时解压失败（$MODDIR/runtime/）。
+请确认模块包完整、/data 空间充足后重装。"
 fi

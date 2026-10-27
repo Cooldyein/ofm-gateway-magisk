@@ -2,11 +2,20 @@
 # 组装运行时并打出可刷入的模块包。
 #
 # 用法：
-#   ./scripts/build.sh                     从上游源码组装运行时（需要 git、网络）
-#   ./scripts/build.sh --runtime <tgz>     直接使用已组装好的 runtime-arm64.tgz
+#   ./scripts/build.sh                 完整包：组装 app + 带 usr 运行时（约 36 MB）
+#   ./scripts/build.sh --patch         增量包：只带 app（约 1.9 MB），复用设备上的 usr
+#   ./scripts/build.sh --usr <src>     指定 usr 来源（usr 目录，或含 usr/ 的 tgz）
+#   ./scripts/build.sh --app <dir>     复用已组装好的 app 目录，跳过上游拉取（离线构建）
+#   ./scripts/build.sh --upstream <v>  指定上游服务版本（默认 2.5.9）
 #
 # 运行时 = Node（含 Android 依赖库） + 上游独立服务源码。
 # 仓库不存二进制：Node 侧放 .cache/，服务代码现场从上游取，都不进版本库。
+#
+# 为什么分两种包：
+#   usr/ 是 Node 与它的 Android 依赖库，解压后 90 MB，压成 33 MB，几乎不随版本变化；
+#   app/ 是上游服务代码，解压后 7.5 MB，压成 1.9 MB，每次升级变的正是它。
+#   完整包两块都带；增量包只带 app，安装时核对设备上 usr 的指纹后原地复用。
+#   于是日常升级的下载量从 36 MB 降到约 2 MB。
 
 set -e
 
@@ -20,6 +29,32 @@ WORK=${OFM_BUILD_DIR:-${TMPDIR:-/tmp}/ofm-build}
 # 基础运行时缓存不能放进 $WORK：脚本开头会整目录重建
 CACHE="$ROOT/.cache"
 DIST="$ROOT/dist"
+
+# ---------------- 参数 ----------------
+
+MODE=full
+USR_SRC=
+APP_SRC=
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --full)    MODE=full;  shift ;;
+    --patch)   MODE=patch; shift ;;
+    --usr|--runtime)
+      [ -n "$2" ] || { echo "$1 后面要跟 usr 来源（usr 目录或含 usr/ 的 tgz）" >&2; exit 1; }
+      USR_SRC=$2; shift 2 ;;
+    --app)
+      [ -n "$2" ] || { echo "--app 后面要跟已组装好的 app 目录" >&2; exit 1; }
+      APP_SRC=$2; shift 2 ;;
+    --upstream)
+      [ -n "$2" ] || { echo "--upstream 后面要跟上游版本号" >&2; exit 1; }
+      UPSTREAM_VERSION=$2; shift 2 ;;
+    -h|--help)
+      sed -n '2,19p' "$ROOT/scripts/build.sh" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "未知参数：$1（用 --help 看用法）" >&2; exit 1 ;;
+  esac
+done
 
 # module.prop 的键名写错（如误写成 .description）不会报错，只是管理器静默忽略该字段，
 # 所以在这里显式校验必填键与不允许的键
@@ -45,14 +80,53 @@ JSON_CODE=$(sed -n 's/.*"versionCode": *\([0-9][0-9]*\).*/\1/p' "$ROOT/update.js
 rm -rf "$WORK"
 mkdir -p "$WORK/module/runtime" "$WORK/module/common" "$DIST"
 
-RUNTIME_TGZ="$WORK/runtime-arm64.tgz"
+# ---------------- usr 指纹 ----------------
+#
+# 增量包靠它判断「设备上那份 usr 能不能直接复用」。
+#
+# 注意：不能用 usr.tgz 的字节哈希。本机是 toybox tar，CI 是 GNU tar，
+# 同样的 usr 内容打出来的 tgz 必然不同字节 —— 那样本机打的增量包就永远装不进
+# CI 出的基线包。这里按「相对路径 + 大小 + 逐文件 sha256」算内容摘要，
+# 与打包工具、压缩级别、mtime 全都无关。
 
-if [ "$1" = "--runtime" ]; then
-  [ -f "$2" ] || { echo "找不到运行时包：$2" >&2; exit 1; }
-  cp "$2" "$RUNTIME_TGZ"
+usr_rev() {
+  ( cd "$1" || return 1
+    find . -type f | LC_ALL=C sort | while IFS= read -r f; do
+      printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"
+    done | sha256sum | cut -c1-16 )
+}
+
+# 把各种形态的 usr 来源规范成「一个含 usr/ 的目录」
+materialize_usr() {
+  _src=$1
+  _dst=$2
+  mkdir -p "$_dst"
+  if [ -d "$_src" ]; then
+    # 已经是 usr 目录，或包含 usr/ 的目录，都试一遍
+    if [ -d "$_src/usr" ]; then
+      cp -a "$_src/usr" "$_dst/usr"
+    else
+      cp -a "$_src" "$_dst/usr"
+    fi
+  elif [ -f "$_src" ]; then
+    tar -xzf "$_src" -C "$_dst" usr || return 1
+  else
+    echo "找不到 usr 运行时：$_src" >&2
+    return 1
+  fi
+  [ -x "$_dst/usr/bin/node" ] || { echo "usr 运行时里没有可执行的 usr/bin/node" >&2; return 1; }
+}
+
+# ---------------- app：上游服务代码 ----------------
+
+APP_DIR="$WORK/app"
+
+if [ -n "$APP_SRC" ]; then
+  # 离线/复用构建：直接拿一份已组装好的 app 目录
+  [ -d "$APP_SRC" ] || { echo "找不到 app 目录：$APP_SRC" >&2; exit 1; }
+  cp -a "$APP_SRC" "$APP_DIR"
 else
-  # Node 与依赖库取自已发布的上游 Android 制品，服务代码从源码组装：
-  # 这样升级服务逻辑不必等上游重新出 APK。
+  # 服务代码从源码组装：升级服务逻辑不必等上游重新出 APK
   SRC_DIR="$WORK/src"
   git clone --depth 1 --branch "v$UPSTREAM_VERSION" "$REPO_URL" "$SRC_DIR" 2>/dev/null ||
     git clone --depth 1 "$REPO_URL" "$SRC_DIR"
@@ -62,26 +136,11 @@ else
     exit 1
   }
 
-  # Node 侧取自缓存的 Android 运行时；缺失时直接失败，
-  # 不用宿主 Node 冒充（ABI 与链接器都不同）
-  if [ -n "$OFM_NODE_RUNTIME" ] && [ -f "$OFM_NODE_RUNTIME" ]; then
-    BASE_RT="$OFM_NODE_RUNTIME"
-  else
-    BASE_RT="$CACHE/node-runtime-arm64.tgz"
-  fi
-  [ -f "$BASE_RT" ] || {
-    echo "缺少 Android Node 运行时：请设置 OFM_NODE_RUNTIME 指向 usr/ 版运行时 tgz" >&2
-    exit 1
-  }
-
-  APP="$WORK/rt"
-  mkdir -p "$APP/app"
-  tar -xzf "$BASE_RT" -C "$APP" usr
-  python3 - "$SRC_DIR" "$APP/app" <<'PY'
+  # 独立服务实际 import 的闭包：src/ + packages/standalone/ + vendor/channel-pack/
+  python3 - "$SRC_DIR" "$APP_DIR" <<'PY'
 import os, shutil, sys
 src, app = sys.argv[1], sys.argv[2]
 os.makedirs(app, exist_ok=True)
-# 独立服务实际 import 的闭包：src/ + packages/standalone/ + vendor/channel-pack/
 for d in ('src',):
     shutil.copytree(os.path.join(src, d), os.path.join(app, d), dirs_exist_ok=True)
 
@@ -104,17 +163,43 @@ for name in ('pack.js', 'qoder-auth-wasm.wasm', 'LICENSE', 'NOTICE.md', 'package
     else:
         shutil.copy2(s, os.path.join(dv, name))
 PY
-
-  chmod 0755 "$APP/usr/bin/node"
-  # ofmctl.sh 以 "$RT_DIR/app" 为工作目录启动 CLI，层级不能变
-  for _d in usr/bin/node app/packages/standalone/cli.mjs app/vendor/channel-pack/pack.js; do
-    [ -e "$APP/$_d" ] || { echo "运行时组装不完整：缺少 $_d" >&2; exit 1; }
-  done
-  tar -czf "$RUNTIME_TGZ" -C "$APP" usr app
 fi
 
+# ofmctl.sh 以 "$RT_DIR/app" 为工作目录启动 CLI，层级不能变
+for _d in packages/standalone/cli.mjs vendor/channel-pack/pack.js; do
+  [ -e "$APP_DIR/$_d" ] || { echo "app 组装不完整：缺少 $_d" >&2; exit 1; }
+done
+
+tar -czf "$WORK/module/runtime/app.tgz" -C "$WORK" app
+
+# ---------------- usr：按模式决定带不带 ----------------
+
+if [ -z "$USR_SRC" ]; then
+  if [ -n "$OFM_NODE_RUNTIME" ] && [ -f "$OFM_NODE_RUNTIME" ]; then
+    USR_SRC="$OFM_NODE_RUNTIME"
+  else
+    USR_SRC="$CACHE/node-runtime-arm64.tgz"
+  fi
+fi
+
+if [ "$MODE" = full ]; then
+  materialize_usr "$USR_SRC" "$WORK/usr-src" || exit 1
+  USR_REV=$(usr_rev "$WORK/usr-src/usr")
+  tar -czf "$WORK/module/runtime/usr.tgz" -C "$WORK/usr-src" usr
+elif [ -n "$OFM_USR_REV" ]; then
+  # 显式给了指纹就不再解一遍 90 MB
+  USR_REV=$OFM_USR_REV
+else
+  materialize_usr "$USR_SRC" "$WORK/usr-src" || exit 1
+  USR_REV=$(usr_rev "$WORK/usr-src/usr")
+fi
+
+[ -n "$USR_REV" ] || { echo "算不出 usr 指纹" >&2; exit 1; }
+
 printf '%s\n' "$VERSION" >"$WORK/module/runtime/.version"
-cp "$RUNTIME_TGZ" "$WORK/module/runtime/runtime-arm64.tgz"
+printf '%s\n' "$USR_REV" >"$WORK/module/runtime/usr-rev"
+
+# ---------------- 模块脚本 ----------------
 
 # 只取打包所需的文件，运行时二进制不进仓库
 cp "$ROOT/module/module.prop" "$ROOT/module/customize.sh" "$ROOT/module/service.sh" \
@@ -126,9 +211,16 @@ chmod 0755 "$WORK/module"/*.sh "$WORK/module/common"/*.sh
 # webroot 的权限与 SELinux 上下文由 KernelSU 安装时自己设置，这里不碰
 cp -r "$ROOT/module/webroot" "$WORK/module/webroot"
 
-OUT="$DIST/OFM_Gateway_Magisk_v$VERSION.zip"
+# ---------------- 打包 ----------------
+
+if [ "$MODE" = full ]; then
+  OUT="$DIST/OFM_Gateway_Magisk_v$VERSION.zip"
+else
+  OUT="$DIST/OFM_Gateway_Magisk_v${VERSION}_patch.zip"
+fi
 rm -f "$OUT"
 
+# -0：运行时 tgz 已是压缩态，再 zip 一遍纯属浪费
 if command -v zip >/dev/null 2>&1; then
   ( cd "$WORK/module" && zip -r -0 -q "$OUT" . )
 else
@@ -143,5 +235,7 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_STORED) as z:
 PY
 fi
 
+echo "类型：$([ "$MODE" = full ] && echo '完整包（含 usr）' || echo '增量包（仅 app）')"
+echo "usr 指纹：$USR_REV"
 echo "已生成：$OUT"
 ls -lh "$OUT"

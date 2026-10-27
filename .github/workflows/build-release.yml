@@ -1,9 +1,15 @@
 name: Build & Release
 
 # 推 tag 即自动构建并发版；也可在 Actions 页面手动指定一个已有 tag 重跑。
-# 运行时（usr/ 那 34 MB 的 Node）不进仓库，也不在手机上上传：
-# 从基线 Release 的 zip 里取现成的 runtime-arm64.tgz，服务代码仍按 UPSTREAM_VERSION
-# 从上游源码现场组装。整个 36 MB 的成品在 runner 本地生成，只走 GitHub 内网上传。
+#
+# 每次发版产出两个附件：
+#   完整包 OFM_Gateway_Magisk_v<ver>.zip        约 35 MB，含 usr（Node 运行时）+ app
+#   增量包 OFM_Gateway_Magisk_v<ver>_patch.zip  约  2 MB，只含 app
+# 日常升级刷增量包即可；只有换 Node 运行时才需要完整包。
+#
+# usr 那 35 MB 不进仓库，也不在手机上上传：从基线 Release 的 zip 里取现成的 usr.tgz，
+# 服务代码按 UPSTREAM_VERSION 从上游源码现场组装。成品在 runner 本地生成，
+# 全程只走 GitHub 内网。
 
 on:
   push:
@@ -20,8 +26,11 @@ permissions:
   contents: write
 
 env:
-  # 提供 usr/ 版 Node 运行时的基线包。升级 Node 时改这里即可，
-  # 前提是那个 tag 的 Release 里有 OFM_Gateway_Magisk_*.zip 附件。
+  # 提供 usr（Node 运行时）的基线 Release。升级 Node 时改这里，
+  # 前提是那个 tag 的 Release 里有带 runtime/usr.tgz（或老格式 runtime/runtime-arm64.tgz）的 zip。
+  #
+  # v0.4.2 发完之后建议改成 v0.4.2：那之后的基线是规整好的 usr.tgz，
+  # 不必每次从老格式整包里抽 usr 重打（内容相同，只是省一步）。
   RUNTIME_BASE_TAG: v0.4.0
 
 jobs:
@@ -76,21 +85,46 @@ jobs:
             --pattern 'OFM_Gateway_Magisk_*.zip' \
             --dir /tmp/base
           ls -lh /tmp/base
-          unzip -o -q /tmp/base/OFM_Gateway_Magisk_*.zip 'runtime/*' -d /tmp/base-x
-          RUNTIME=/tmp/base-x/runtime/runtime-arm64.tgz
-          [ -f "$RUNTIME" ] || { echo "基线包里没有 runtime/runtime-arm64.tgz" >&2; exit 1; }
-          # 运行时必须含 usr/bin/node，build.sh 只取 usr/ 这一段
-          tar -tzf "$RUNTIME" | grep -qx 'usr/bin/node' || { echo "运行时里缺 usr/bin/node" >&2; exit 1; }
-          echo "OFM_RUNTIME_TGZ=$RUNTIME" >> "$GITHUB_ENV"
-          echo "运行时来自 $BASE_TAG：$(du -h "$RUNTIME" | cut -f1)"
+          # 基线 Release 可能同时挂着完整包和 _patch 增量包（v0.4.2 起如此），
+          # 直接拿通配符喂给 unzip 会因「匹配到多个」而失败，所以先挑出完整包
+          BASE_ZIP=$(ls /tmp/base/OFM_Gateway_Magisk_*.zip | grep -v '_patch\.zip$' | head -n 1)
+          [ -f "$BASE_ZIP" ] || { echo "基线包里找不到完整包 zip" >&2; exit 1; }
+          echo "基线完整包：$(basename "$BASE_ZIP")"
+          unzip -o -q "$BASE_ZIP" 'runtime/*' -d /tmp/base-x
 
-      - name: 组装服务代码并打包
+          # 新格式直接有 usr.tgz；老格式（v0.4.1 及更早）只有整包 runtime-arm64.tgz，
+          # build.sh 的 --usr 两种都能吃，这里统一成 usr 来源
+          if [ -f /tmp/base-x/runtime/usr.tgz ]; then
+            USR=/tmp/base-x/runtime/usr.tgz
+          elif [ -f /tmp/base-x/runtime/runtime-arm64.tgz ]; then
+            USR=/tmp/base-x/runtime/runtime-arm64.tgz
+          else
+            echo "基线包里没有 runtime/usr.tgz 或 runtime/runtime-arm64.tgz" >&2
+            exit 1
+          fi
+          echo "OFM_USR=$USR" >> "$GITHUB_ENV"
+          echo "运行时来自 $BASE_TAG：$(du -h "$USR" | cut -f1)"
+
+      - name: 组装服务代码并打完整包
+        env:
+          OFM_BUILD_DIR: /tmp/ofm-build
         run: |
-          # OFM_RUNTIME_TGZ 由上一步写进 $GITHUB_ENV，这里直接读；
+          # OFM_USR 由上一步写进 $GITHUB_ENV，这里直接读；
           # 不能用 ${{ env.xxx }} 引用它——那种写法在解析阶段就取值了，那时还是空的
-          OFM_NODE_RUNTIME="$OFM_RUNTIME_TGZ" sh scripts/build.sh
+          sh scripts/build.sh --usr "$OFM_USR"
+          echo "OFM_ZIP=$(ls dist/OFM_Gateway_Magisk_v*[0-9].zip)" >> "$GITHUB_ENV"
+          # build.sh 每次都会重建构建目录，增量包要复用这一步组装的 app，先挪出去
+          cp -a "$OFM_BUILD_DIR/app" /tmp/app-stage
           ls -lh dist/
-          echo "OFM_ZIP=$(ls dist/OFM_Gateway_Magisk_*.zip)" >> "$GITHUB_ENV"
+
+      - name: 打增量包
+        env:
+          OFM_BUILD_DIR: /tmp/ofm-build
+        run: |
+          # 复用上一步组装好的 app，避免重复拉上游源码
+          sh scripts/build.sh --patch --app /tmp/app-stage --usr "$OFM_USR"
+          echo "OFM_PATCH=$(ls dist/OFM_Gateway_Magisk_v*_patch.zip)" >> "$GITHUB_ENV"
+          ls -lh dist/
 
       - name: 生成 Release 正文
         env:
@@ -102,9 +136,19 @@ jobs:
             echo
             echo '---'
             echo
+            echo '### 下载哪个'
+            echo
+            echo '| 文件 | 大小 | 什么时候下 |'
+            echo '| --- | --- | --- |'
+            echo '| `OFM_Gateway_Magisk_v'"$VERSION"'.zip` | 约 35 MB | 第一次装，或从很老的版本升级 |'
+            echo '| `OFM_Gateway_Magisk_v'"$VERSION"'_patch.zip` | 约 2 MB | 已经装过 0.4.2 及以上，日常升级用这个 |'
+            echo
+            echo '增量包只含服务代码，安装时会核对设备上已有的 Node 运行时；'
+            echo '对不上会直接报错让你改刷完整包，不会装出半套。'
+            echo
             echo '### 安装'
             echo
-            echo '下载下方附件，在 KernelSU / Magisk 模块页面选「从本地安装」，重启手机。'
+            echo '下载后选「从本地安装」，重启手机。'
             echo
             echo '刷入方式与其他细节见 [README](https://github.com/'"$GITHUB_REPOSITORY"'#安装)。'
           } > /tmp/release-body.md
@@ -125,7 +169,7 @@ jobs:
               --title "$TAG" --notes-file /tmp/release-body.md
           fi
           # 同名附件用 --clobber 覆盖：手动重跑工作流时不会因已存在而失败
-          gh release upload "$TAG" "$OFM_ZIP" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" "$OFM_ZIP" "$OFM_PATCH" --repo "$GITHUB_REPOSITORY" --clobber
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | "\(.name)  \(.state)  \(.size) bytes"'
 
@@ -133,12 +177,22 @@ jobs:
         env:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          EXPECTED="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$OFM_ZIP")"
+          # 管理器内更新默认指向增量包：日常升级走的就是这条路。
+          # 例外是「基线版本」（换 Node 或全新的包结构），那种版本必须指向完整包，
+          # 否则老用户会被推到一个装不上的增量包上。指向哪个由 update.json 决定，
+          # 这里只校验它确实是本次产出的两个附件之一，别写成上个月的包。
+          BASE=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
+          FULL_NAME=$(basename "$OFM_ZIP")
+          PATCH_NAME=$(basename "$OFM_PATCH")
           ACTUAL=$(sed -n 's/.*"zipUrl": *"\([^"]*\)".*/\1/p' update.json)
-          if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "update.json 的 zipUrl 与本次产物不一致：" >&2
-            echo "  期望：$EXPECTED" >&2
-            echo "  实际：$ACTUAL" >&2
-            exit 1
-          fi
+          case "$ACTUAL" in
+            "$BASE/$FULL_NAME")  echo "管理器内更新 -> 完整包 $FULL_NAME" ;;
+            "$BASE/$PATCH_NAME") echo "管理器内更新 -> 增量包 $PATCH_NAME" ;;
+            *)
+              echo "update.json 的 zipUrl 与本次产物不一致：" >&2
+              echo "  只接受：$BASE/$FULL_NAME" >&2
+              echo "     或： $BASE/$PATCH_NAME" >&2
+              echo "  实际：  $ACTUAL" >&2
+              exit 1 ;;
+          esac
           echo "zipUrl 核对通过：$ACTUAL"
