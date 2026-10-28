@@ -255,6 +255,16 @@ Actions 每次产出两个附件。`update.json` 的 `zipUrl` 决定管理器内
 - 模块不收集任何数据，也不联网上报；所有状态都在 `/data/adb/ofm`。
 - 与任何模型提供方无隶属或背书关系。
 
+## 贡献者
+
+| 贡献者 | 做了什么 |
+| --- | --- |
+| [玖清雨](https://www.coolapk.com/u/3214953) · [@luoyi0914](https://github.com/luoyi0914) | 作者：模块结构与安装逻辑、构建与发版流程、WebUI 与动作按钮、文档 |
+| DeepSeek Harness（AI 编程代理） | 结对开发：`usr` / `app` 拆包做增量更新（35 MB → 2 MB）、`developer` 角色兼容修复、渠道桥（CodeArts / MaaS / WorkBuddy）、上游同步与线上问题排查 |
+
+改动基本都能在 [CHANGELOG.md](CHANGELOG.md) 里对上号；如果你也在某条改动里出过力却没被列上，
+开个 PR 加一行就行。
+
 ## License
 
 MIT
