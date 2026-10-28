@@ -3,6 +3,15 @@
 把 Our Free Model 的本地网关做成系统级模块：
 **开机以 root 常驻运行，不需要安装那个 App，也不需要它在后台待着。**
 
+> [!TIP]
+> ### 📱 推荐：在手机上直接跑 AI 编程代理
+> **[Deepseek-Harness-Local-Android](https://github.com/Soodok/Deepseek-Harness-Local-Android)**
+> —— 免 Root、免 Termux，在 Android 上原生运行 DeepSeek Harness，自带扩展中心，
+> 终端、文件、SSH、多智能体协作一应俱全。
+>
+> 本模块的代码、构建、发版与线上排查，全程都是在这台手机上的 DSH 里完成的。
+> 想把手机接上本地模型网关，两者正好配套。
+
 > 作者酷安主页：<https://www.coolapk.com/u/3214953>
 >
 > 运行时代码分别来自 [上游 App](https://yun.139.com/shareweb/#/w/i/2yA8DQdn7gvts) 与
