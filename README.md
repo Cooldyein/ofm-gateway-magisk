@@ -45,7 +45,7 @@
 ## 上游来源
 
 本模块不自己实现任何模型能力，只是把上游的现成服务搬到 Android 系统层运行。
-当前内置上游版本：**2.5.9**。
+当前内置上游版本：**2.7.3**。
 
 | 来源 | 地址 | 说明 |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ su -c "sh $CTL info"       # 机器可读状态（WebUI 用）
 `.cache/` 不进版本库。首次构建需要自己准备一份 `usr/` 版运行时（含 `usr/bin/node`
 与 `usr/lib/*.so`），或用 `--usr` 直接给定；缺失时脚本会报错而不是拿宿主 Node 充数。
 
-上游版本由 `UPSTREAM_VERSION` 控制（默认 `2.5.9`），仓库地址由 `OFM_SOURCE_REPO` 覆盖。
+上游版本由 `UPSTREAM_VERSION` 控制（默认 `2.7.3`），仓库地址由 `OFM_SOURCE_REPO` 覆盖。
 脚本会校验取到的 `package.json` 版本与期望值一致，不一致直接失败。
 
 构建前脚本会校验：
@@ -269,7 +269,7 @@ Actions 每次产出两个附件。`update.json` 的 `zipUrl` 决定管理器内
 | 贡献者 | 做了什么 |
 | --- | --- |
 | [玖清雨](https://www.coolapk.com/u/3214953) · [@luoyi0914](https://github.com/luoyi0914) | 作者：模块结构与安装逻辑、构建与发版流程、WebUI 与动作按钮、文档 |
-| DeepSeek Harness（AI 编程代理） | 结对开发：`usr` / `app` 拆包做增量更新（35 MB → 2 MB）、`developer` 角色兼容修复、渠道桥（CodeArts / MaaS / WorkBuddy）、上游同步与线上问题排查 |
+| DeepSeek Harness（AI 编程代理） | 结对开发：`usr` / `app` 拆包做增量更新（35 MB → 2 MB）、`developer` 角色兼容修复、上游同步与线上问题排查 |
 
 改动基本都能在 [CHANGELOG.md](CHANGELOG.md) 里对上号；如果你也在某条改动里出过力却没被列上，
 开个 PR 加一行就行。

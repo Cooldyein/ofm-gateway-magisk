@@ -6,7 +6,7 @@
 #   ./scripts/build.sh --patch         增量包：只带 app（约 3.4 MB），复用设备上的 usr
 #   ./scripts/build.sh --usr <src>     指定 usr 来源（usr 目录，或含 usr/ 的 tgz）
 #   ./scripts/build.sh --app <dir>     复用已组装好的 app 目录，跳过上游拉取（离线构建）
-#   ./scripts/build.sh --upstream <v>  指定上游服务版本（默认 2.7.2）
+#   ./scripts/build.sh --upstream <v>  指定上游服务版本（默认 2.7.3）
 #
 # 运行时 = Node（含 Android 依赖库） + 上游独立服务源码。
 # 仓库不存二进制：Node 侧放 .cache/，服务代码现场从上游取，都不进版本库。
@@ -25,7 +25,7 @@ set -e
 ROOT=$(cd "${0%/*}/.." && pwd)
 VERSION=$(sed -n 's/^version=//p' "$ROOT/module/module.prop")
 VCODE=$(sed -n 's/^versionCode=//p' "$ROOT/module/module.prop")
-UPSTREAM_VERSION=${UPSTREAM_VERSION:-2.7.2}
+UPSTREAM_VERSION=${UPSTREAM_VERSION:-2.7.3}
 REPO_URL=${OFM_SOURCE_REPO:-https://github.com/Ebony-Vinyl/dsh-our-free-model.git}
 # 构建目录放到系统临时区：proot 下在工作区内跑 git clone / tar 容易被静默限制
 WORK=${OFM_BUILD_DIR:-${TMPDIR:-/tmp}/ofm-build}
